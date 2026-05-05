@@ -1,0 +1,14 @@
+services:
+  all-notify:
+    build: .
+    image: all-notify:latest
+    container_name: all-notify
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ALL_NOTIFY_ADDR: ":8080"
+      ALL_NOTIFY_DATA_DIR: "/data"
+      ALL_NOTIFY_SEND_TIMEOUT: "10s"
+    volumes:
+      - ./data:/data
