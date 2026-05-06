@@ -12,9 +12,10 @@ docker run --rm -v "$PWD":/src -w /src golang:1.23-alpine sh -lc "go test ./..."
 
 - GET、JSON、表单、纯文本请求解析。
 - 配置 API 保存发送目标、保存通知入口、列表查询入口和目标关联。
+- Web 首页包含使用说明入口，以及通知入口 curl/Python 示例渲染逻辑。
 - 发送目标测试接口、通知入口测试接口会实际发送并写入日志。
 - SQLite 入口列表查询不会因为单连接嵌套查询卡死。
-- Bark 和 ntfy 发送器对本地 HTTP test server 的真实请求。
+- Bark、ntfy 和公告板发送器对本地 HTTP test server 的真实请求。
 - SMTP 发送器对本地 fake SMTP server 的真实协议交互。
 - HTTP 服务配置 API、发送 API 和发送日志落库。
 - SQLite 发送日志裁剪。
@@ -28,9 +29,33 @@ curl http://localhost:18080/healthz
 docker rm -f all-notify-test
 ```
 
+## 跨平台编译验证
+
+发布单文件程序前，至少验证 Linux x64 和 Windows x64 构建：
+
+```bash
+mkdir -p dist
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/all-notify-linux-amd64 ./cmd/all-notify
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/all-notify-windows-amd64.exe ./cmd/all-notify
+```
+
+如需 macOS 构建：
+
+```bash
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/all-notify-darwin-arm64 ./cmd/all-notify
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/all-notify-darwin-amd64 ./cmd/all-notify
+```
+
+Linux 构建产物可直接做本地冒烟测试：
+
+```bash
+./dist/all-notify-linux-amd64 -addr=:18080 -data-dir=./tmp-data
+curl http://localhost:18080/healthz
+```
+
 ## 真实渠道测试
 
-真实 Bark、ntfy、SMTP 测试需要准备自己的设备 key、topic 或邮箱账号。建议先在 Web 页面创建单个目标并绑定到测试入口，然后调用：
+真实 Bark、ntfy、SMTP、公告板测试需要准备自己的设备 key、topic、邮箱账号或公告板 API Token。建议先在 Web 页面创建单个目标并绑定到测试入口，然后调用：
 
 ```bash
 curl "http://localhost:8080/send/test?title=测试&message=这是一条测试通知"

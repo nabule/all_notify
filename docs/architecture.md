@@ -7,10 +7,11 @@ All Notify 是一个单进程 Go HTTP 服务：
 - `cmd/all-notify`：启动入口，加载环境变量，初始化日志、SQLite 和 HTTP Server。
 - `internal/server`：HTTP API、Web 页面、请求解析、运行日志读取。
 - `internal/store`：SQLite 连接、迁移、配置 CRUD、发送日志写入和裁剪。
-- `internal/notify`：Bark、ntfy、SMTP 三类发送目标。
+- `internal/notify`：Bark、ntfy、SMTP、公告板发送目标。
 - `internal/model`：配置、通知请求和日志模型。
 
 服务不包含鉴权和用户系统。Web 页面与外部调用方使用同一组 HTTP API。
+Web 页面内置“使用说明”页签，并在每个通知入口下根据当前访问域名和入口 key 生成 curl、Python 请求示例，便于调用方直接复制。
 
 ## 数据流
 

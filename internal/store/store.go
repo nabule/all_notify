@@ -136,7 +136,7 @@ func (s *Store) ListRoutes(ctx context.Context) ([]model.Route, error) {
 		return nil, err
 	}
 
-	var routes []model.Route
+	routes := make([]model.Route, 0)
 	for rows.Next() {
 		route, err := scanRoute(rows)
 		if err != nil {
@@ -279,7 +279,7 @@ func (s *Store) ListTargets(ctx context.Context) ([]model.Target, error) {
 	}
 	defer rows.Close()
 
-	var targets []model.Target
+	targets := make([]model.Target, 0)
 	for rows.Next() {
 		target, err := scanTarget(rows)
 		if err != nil {
@@ -383,7 +383,7 @@ func (s *Store) ListSendLogs(ctx context.Context, filter LogFilter) ([]model.Sen
 	}
 	defer rows.Close()
 
-	var logs []model.SendLog
+	logs := make([]model.SendLog, 0)
 	for rows.Next() {
 		entry, err := scanSendLog(rows)
 		if err != nil {

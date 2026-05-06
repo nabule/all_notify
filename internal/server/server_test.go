@@ -245,6 +245,40 @@ func TestConfigAPISavesTargetsAndRoutes(t *testing.T) {
 	}
 }
 
+func TestListAPIsReturnEmptyArrays(t *testing.T) {
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New(Config{SendTimeout: 2 * time.Second}, st, log.New(io.Discard, "", 0), filepath.Join(tempDir, "app.log"))
+	server := httptest.NewServer(app.Routes())
+	defer server.Close()
+
+	for _, path := range []string{"/api/routes", "/api/targets", "/api/logs?limit=20"} {
+		resp, err := http.Get(server.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", path, resp.StatusCode, body)
+		}
+		if strings.TrimSpace(string(body)) != "[]" {
+			t.Fatalf("%s returned %s, want []", path, body)
+		}
+	}
+}
+
 func TestConfigTestAPIsSendAndWriteLogs(t *testing.T) {
 	received := make(chan string, 4)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -350,5 +384,61 @@ func TestRuntimeLogsAPI(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "two") || strings.Contains(rec.Body.String(), "one") {
 		t.Fatalf("unexpected runtime log response: %s", rec.Body.String())
+	}
+}
+
+func TestWebPageIncludesUsageEntryAndRouteExamples(t *testing.T) {
+	app := New(Config{}, nil, log.New(io.Discard, "", 0), "")
+	server := httptest.NewServer(app.Routes())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		`data-tab="help"`,
+		"使用说明",
+		"routeExamples(route)",
+		"curl",
+		"urllib.request",
+		`<option value="board">board</option>`,
+		`mode: "append"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("web page missing %q", want)
+		}
+	}
+
+	cssResp, err := http.Get(server.URL + "/static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cssResp.Body.Close()
+	css, err := io.ReadAll(cssResp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(css), ".route-card") {
+		t.Fatalf("css missing route card styles")
+	}
+
+	iconResp, err := http.Get(server.URL + "/favicon.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer iconResp.Body.Close()
+	if iconResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("favicon status=%d", iconResp.StatusCode)
 	}
 }

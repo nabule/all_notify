@@ -52,6 +52,7 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/static/app.css", s.css)
+	mux.HandleFunc("/favicon.ico", s.favicon)
 	mux.HandleFunc("/send/", s.send)
 	mux.HandleFunc("/api/routes", s.routes)
 	mux.HandleFunc("/api/routes/", s.routeByID)
@@ -763,6 +764,14 @@ func (s *Server) css(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	_, _ = w.Write([]byte(appCSS))
+}
+
+func (s *Server) favicon(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 var webTemplate = template.Must(template.New("web").Parse(indexHTML))

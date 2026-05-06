@@ -21,6 +21,7 @@ const indexHTML = `<!doctype html>
       <button data-tab="logs">发送日志</button>
       <button data-tab="runtime">运行日志</button>
       <button data-tab="settings">设置</button>
+      <button data-tab="help">使用说明</button>
     </nav>
   </header>
 
@@ -68,6 +69,7 @@ const indexHTML = `<!doctype html>
               <option value="bark">bark</option>
               <option value="ntfy">ntfy</option>
               <option value="smtp">smtp</option>
+              <option value="board">board</option>
             </select>
           </label>
           <label class="check"><input id="targetEnabled" type="checkbox" checked> 启用</label>
@@ -118,6 +120,36 @@ const indexHTML = `<!doctype html>
         <button type="submit">保存设置</button>
       </form>
     </section>
+
+    <section id="help" class="tab">
+      <div class="panel doc">
+        <div class="panel-title"><h2>使用说明</h2></div>
+        <h3>配置流程</h3>
+        <ol>
+          <li>进入“发送目标”，新增 Bark、ntfy、SMTP 或公告板目标。</li>
+          <li>在目标列表点击“测试”，确认该目标可以收到测试通知。</li>
+          <li>进入“通知入口”，新增入口并选择一个或多个发送目标。</li>
+          <li>在入口列表查看对应的 curl 和 Python 请求示例。</li>
+          <li>调用 <code>/send/{key}</code> 发送业务通知，并在“发送日志”查看结果。</li>
+        </ol>
+        <h3>标准字段</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>字段</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>title</code></td><td>通知标题，未传时使用入口默认标题或入口名称。</td></tr>
+              <tr><td><code>message</code> / <code>body</code> / <code>content</code></td><td>通知正文，三者任选其一。</td></tr>
+              <tr><td><code>url</code> / <code>click</code></td><td>点击通知后打开的 URL。</td></tr>
+              <tr><td><code>priority</code> / <code>level</code></td><td>通知优先级。</td></tr>
+              <tr><td><code>tags</code> / <code>tag</code></td><td>标签，GET/表单中用逗号分隔，JSON 中可用数组。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>返回状态</h3>
+        <p><code>200</code> 表示全部目标发送成功；<code>502</code> 表示至少一个目标失败；<code>404</code> 表示入口不存在或已禁用；<code>400</code> 表示请求参数无效。</p>
+        <p>服务不做内置鉴权，请只部署在可信网络，或由外部网关控制访问。</p>
+      </div>
+    </section>
   </main>
 
   <div id="toast"></div>
@@ -149,6 +181,12 @@ const examples = {
     from: "user@example.com",
     to: ["receiver@example.com"],
     subject_prefix: "[All Notify]"
+  },
+  board: {
+    server_url: "https://board.12342345.xyz",
+    board_id: "hr",
+    api_token: "admin123",
+    mode: "append"
   }
 };
 
@@ -174,11 +212,14 @@ async function api(path, options = {}) {
 
 async function loadAll() {
   try {
-    [routes, targets, logs] = await Promise.all([
+    const result = await Promise.all([
       api("/api/routes"),
       api("/api/targets"),
       api("/api/logs?limit=20")
     ]);
+    routes = result[0] || [];
+    targets = result[1] || [];
+    logs = result[2] || [];
     renderRoutes();
     renderTargets();
     renderRouteTargetOptions();
@@ -198,14 +239,63 @@ function renderMetrics() {
 }
 
 function renderRoutes() {
-  document.getElementById("routesTable").innerHTML = table(["ID", "Key", "名称", "启用", "目标", "操作"], routes.map(r => [
-    r.id,
-    esc(r.key),
-    esc(r.name),
-    r.enabled ? "是" : "否",
-    (r.target_ids || []).join(", "),
-    '<button onclick="testRoute(' + r.id + ')">测试</button> <button onclick="editRoute(' + r.id + ')">编辑</button> <button class="danger" onclick="deleteRoute(' + r.id + ')">删除</button>'
-  ]));
+  const container = document.getElementById("routesTable");
+  if (!routes.length) {
+    container.innerHTML = '<div class="empty">暂无数据</div>';
+    return;
+  }
+  container.innerHTML = '<div class="route-list">' + routes.map(renderRouteCard).join("") + '</div>';
+}
+
+function renderRouteCard(route) {
+  const examples = routeExamples(route);
+  const targetIDs = (route.target_ids || []).join(", ") || "未选择";
+  return '<article class="route-card">' +
+    '<div class="route-head">' +
+      '<div>' +
+        '<div class="route-title">' + esc(route.name) + '</div>' +
+        '<div class="route-meta">ID ' + route.id + ' · Key <code>' + esc(route.key) + '</code> · 目标 ' + esc(targetIDs) + '</div>' +
+      '</div>' +
+      '<span class="status ' + (route.enabled ? 'success' : 'failed') + '">' + (route.enabled ? '启用' : '禁用') + '</span>' +
+    '</div>' +
+    '<details class="route-examples" open>' +
+      '<summary>请求示例</summary>' +
+      '<div class="example-grid">' +
+        '<div><div class="example-title">curl</div><pre>' + esc(examples.curl) + '</pre></div>' +
+        '<div><div class="example-title">Python</div><pre>' + esc(examples.python) + '</pre></div>' +
+      '</div>' +
+    '</details>' +
+    '<div class="route-actions">' +
+      '<button onclick="testRoute(' + route.id + ')">测试</button>' +
+      '<button onclick="editRoute(' + route.id + ')">编辑</button>' +
+      '<button class="danger" onclick="deleteRoute(' + route.id + ')">删除</button>' +
+    '</div>' +
+  '</article>';
+}
+
+function routeExamples(route) {
+  const url = window.location.origin + "/send/" + encodeURIComponent(route.key);
+  const jsonBody = '{"title":"CPU","message":"CPU usage high","url":"https://example.com","tags":["warning"]}';
+  return {
+    curl: 'curl "' + url + '?title=CPU&message=CPU%20usage%20high"\n\n' +
+      'curl -X POST "' + url + '" -H "Content-Type: application/json" -d \'' + jsonBody + '\'',
+    python: 'import json\nimport urllib.request\n\n' +
+      'url = "' + url + '"\n' +
+      'payload = {\n' +
+      '    "title": "CPU",\n' +
+      '    "message": "CPU usage high",\n' +
+      '    "url": "https://example.com",\n' +
+      '    "tags": ["warning"],\n' +
+      '}\n\n' +
+      'req = urllib.request.Request(\n' +
+      '    url,\n' +
+      '    data=json.dumps(payload).encode("utf-8"),\n' +
+      '    headers={"Content-Type": "application/json"},\n' +
+      '    method="POST",\n' +
+      ')\n' +
+      'with urllib.request.urlopen(req, timeout=10) as resp:\n' +
+      '    print(resp.status, resp.read().decode("utf-8"))'
+  };
 }
 
 function renderTargets() {
@@ -483,6 +573,7 @@ main { padding: 24px 28px 40px; }
 .metric strong { display: block; margin-top: 8px; font-size: 28px; }
 .panel { padding: 18px; }
 .panel.narrow { max-width: 520px; }
+.panel.doc { max-width: 980px; }
 .panel-title, .toolbar {
   display: flex;
   justify-content: space-between;
@@ -505,6 +596,36 @@ input, select, textarea {
 }
 select[multiple] { min-height: 170px; }
 textarea { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; line-height: 1.45; }
+.route-list { display: grid; gap: 14px; }
+.route-card {
+  border: 1px solid #d8dde6;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcfd;
+}
+.route-head, .route-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.route-title { font-weight: 700; margin-bottom: 5px; }
+.route-meta { color: #687280; font-size: 12px; line-height: 1.5; }
+.route-examples { margin-top: 12px; }
+.route-examples summary {
+  cursor: pointer;
+  color: #235d8f;
+  font-size: 13px;
+  font-weight: 600;
+}
+.example-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+.example-title { color: #526071; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.route-actions { justify-content: flex-start; margin-top: 12px; flex-wrap: wrap; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { border-bottom: 1px solid #e4e8ee; padding: 9px 8px; text-align: left; vertical-align: top; }
@@ -525,6 +646,10 @@ pre {
   padding: 14px;
   font-size: 12px;
 }
+.route-examples pre { min-height: 150px; margin: 0; }
+.doc h3 { margin: 18px 0 10px; font-size: 15px; }
+.doc p, .doc li { color: #46515f; font-size: 13px; line-height: 1.7; }
+.doc ol { margin: 0; padding-left: 22px; }
 #toast {
   position: fixed;
   right: 18px;
@@ -543,7 +668,7 @@ pre {
 @media (max-width: 900px) {
   .topbar { align-items: flex-start; flex-direction: column; }
   .tabs { justify-content: flex-start; }
-  .grid.two, .metric-grid { grid-template-columns: 1fr; }
+  .grid.two, .metric-grid, .example-grid { grid-template-columns: 1fr; }
   main { padding: 16px; }
 }
 `

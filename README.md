@@ -1,6 +1,6 @@
 # All Notify
 
-All Notify 是一个轻量的聚合通知发送服务。它通过 HTTP API 暴露全部功能，不做鉴权，支持 Bark、ntfy 和 SMTP 邮件，并提供 Web 页面管理配置和查看日志。
+All Notify 是一个轻量的聚合通知发送服务。它通过 HTTP API 暴露全部功能，不做鉴权，支持 Bark、ntfy、SMTP 邮件和公告板，并提供 Web 页面管理配置和查看日志。
 
 ## 快速启动
 
@@ -11,6 +11,39 @@ docker compose up -d --build
 打开 `http://localhost:8080` 进入 Web 配置页面。默认数据目录为 `./data`，容器内路径为 `/data`。
 
 完整使用流程见 [docs/usage.md](docs/usage.md)。
+Web 页面顶部有“使用说明”入口，“通知入口”列表会按每个入口的 `key` 自动生成 curl 和 Python 请求示例。
+
+## 编译和运行
+
+需要 Go 1.23 或更新版本。本机运行：
+
+```bash
+go run ./cmd/all-notify -- -addr=:8080 -data-dir=./data -send-timeout=10s
+```
+
+Linux x64 单文件：
+
+```bash
+mkdir -p dist
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/all-notify-linux-amd64 ./cmd/all-notify
+./dist/all-notify-linux-amd64 -addr=:8080 -data-dir=./data -send-timeout=10s -log-max-bytes=10485760 -log-max-backups=5
+```
+
+Windows x64 单文件：
+
+```powershell
+New-Item -ItemType Directory -Force dist | Out-Null
+$env:CGO_ENABLED="0"; $env:GOOS="windows"; $env:GOARCH="amd64"
+go build -trimpath -ldflags="-s -w" -o dist/all-notify-windows-amd64.exe ./cmd/all-notify
+.\dist\all-notify-windows-amd64.exe -addr=:8080 -data-dir=.\data -send-timeout=10s -log-max-bytes=10485760 -log-max-backups=5
+```
+
+Docker 运行：
+
+```bash
+docker build -t all-notify:local .
+docker run --rm -p 8080:8080 -v "$PWD/data:/data" all-notify:local -addr=:8080 -data-dir=/data -send-timeout=10s
+```
 
 ## HTTP 发送
 
@@ -117,13 +150,37 @@ SMTP：
 
 `security` 可选 `none`、`starttls`、`tls`。
 
-## 环境变量
+公告板：
 
-- `ALL_NOTIFY_ADDR`：监听地址，默认 `:8080`。
-- `ALL_NOTIFY_DATA_DIR`：数据目录，默认 `/data`。
-- `ALL_NOTIFY_SEND_TIMEOUT`：单个目标发送超时，默认 `10s`。
-- `ALL_NOTIFY_LOG_MAX_BYTES`：运行日志单文件大小，默认 `10485760`。
-- `ALL_NOTIFY_LOG_MAX_BACKUPS`：运行日志保留文件数，默认 `5`。
+```json
+{
+  "server_url": "https://board.12342345.xyz",
+  "board_id": "hr",
+  "api_token": "admin123",
+  "mode": "append"
+}
+```
+
+`mode` 可选 `append` 或 `new`：`append` 会追加公告，`new` 会覆盖当前频道并写入一条新公告。未配置时默认 `append`。
+
+## 启动参数
+
+单文件程序推荐使用命令行参数启动：
+
+```bash
+./all-notify -addr=:8080 -data-dir=./data -send-timeout=10s -log-max-bytes=10485760 -log-max-backups=5
+```
+
+参数优先级高于同名环境变量，环境变量仅作为兼容默认值。
+
+| 参数 | 环境变量 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `-addr` | `ALL_NOTIFY_ADDR` | `:8080` | HTTP 监听地址 |
+| `-data-dir` | `ALL_NOTIFY_DATA_DIR` | `/data` | 数据和日志目录 |
+| `-send-timeout` | `ALL_NOTIFY_SEND_TIMEOUT` | `10s` | 单个发送目标超时时间 |
+| `-log-max-bytes` | `ALL_NOTIFY_LOG_MAX_BYTES` | `10485760` | 单个运行日志文件最大字节数 |
+| `-log-max-backups` | `ALL_NOTIFY_LOG_MAX_BACKUPS` | `5` | 运行日志轮转保留文件数 |
+
 
 ## 测试
 

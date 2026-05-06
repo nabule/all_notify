@@ -72,6 +72,13 @@ type SMTPConfig struct {
 	SubjectPrefix string   `json:"subject_prefix"`
 }
 
+type BoardConfig struct {
+	ServerURL string `json:"server_url"`
+	BoardID   string `json:"board_id"`
+	APIToken  string `json:"api_token"`
+	Mode      string `json:"mode"`
+}
+
 func NewDispatcher(timeout time.Duration) *Dispatcher {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -130,6 +137,8 @@ func (d *Dispatcher) sendOne(ctx context.Context, notification model.Notificatio
 		response, err = d.sendNtfy(ctx, notification, target.Config)
 	case model.TargetTypeSMTP:
 		response, err = sendSMTP(ctx, notification, target.Config, d.Timeout)
+	case model.TargetTypeBoard:
+		response, err = d.sendBoard(ctx, notification, target.Config)
 	default:
 		err = fmt.Errorf("不支持的目标类型: %s", target.Type)
 	}
@@ -173,6 +182,17 @@ func ValidateTarget(target model.Target) error {
 		}
 		if strings.TrimSpace(cfg.Host) == "" || cfg.Port <= 0 || strings.TrimSpace(cfg.From) == "" || len(cfg.To)+len(cfg.CC)+len(cfg.BCC) == 0 {
 			return errors.New("SMTP 目标必须配置 host、port、from 和至少一个收件人")
+		}
+	case model.TargetTypeBoard:
+		var cfg BoardConfig
+		if err := decodeConfig(target.Config, &cfg); err != nil {
+			return err
+		}
+		if strings.TrimSpace(cfg.ServerURL) == "" || strings.TrimSpace(cfg.BoardID) == "" || strings.TrimSpace(cfg.APIToken) == "" {
+			return errors.New("公告板目标必须配置 server_url、board_id 和 api_token")
+		}
+		if _, err := normalizeBoardMode(cfg.Mode); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("不支持的目标类型: %s", target.Type)
@@ -263,6 +283,38 @@ func (d *Dispatcher) sendNtfy(ctx context.Context, notification model.Notificati
 	}
 
 	return d.doHTTP(req)
+}
+
+func (d *Dispatcher) sendBoard(ctx context.Context, notification model.Notification, raw string) (string, error) {
+	var cfg BoardConfig
+	if err := decodeConfig(raw, &cfg); err != nil {
+		return "", err
+	}
+	serverURL := strings.TrimRight(strings.TrimSpace(cfg.ServerURL), "/")
+	boardID := strings.Trim(strings.TrimSpace(cfg.BoardID), "/")
+	apiToken := strings.TrimSpace(cfg.APIToken)
+	if serverURL == "" || boardID == "" || apiToken == "" {
+		return "", errors.New("公告板 server_url、board_id 和 api_token 不能为空")
+	}
+	mode, err := normalizeBoardMode(cfg.Mode)
+	if err != nil {
+		return "", err
+	}
+
+	content := notification.Message
+	if notification.URL != "" {
+		content = strings.TrimSpace(content + "\n\n" + notification.URL)
+	}
+	if strings.TrimSpace(content) == "" {
+		return "", errors.New("公告板 content 不能为空")
+	}
+
+	endpoint := serverURL + "/api/update/" + url.PathEscape(boardID)
+	payload := map[string]string{
+		"action":  mode,
+		"content": content,
+	}
+	return d.postJSON(ctx, endpoint, payload, map[string]string{"Authorization": "Bearer " + apiToken})
 }
 
 func (d *Dispatcher) postJSON(ctx context.Context, endpoint string, payload any, headers map[string]string) (string, error) {
@@ -445,6 +497,17 @@ func defaultString(value, fallback string) string {
 		return strings.TrimSpace(value)
 	}
 	return fallback
+}
+
+func normalizeBoardMode(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "append":
+		return "append", nil
+	case "new", "overwrite", "replace":
+		return "new", nil
+	default:
+		return "", errors.New("公告板 mode 只支持 append 或 new")
+	}
 }
 
 func truncate(value string, limit int) string {

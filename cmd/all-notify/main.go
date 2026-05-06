@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -17,12 +18,12 @@ import (
 )
 
 func main() {
-	cfg := server.Config{
-		Addr:          env("ALL_NOTIFY_ADDR", ":8080"),
-		DataDir:       env("ALL_NOTIFY_DATA_DIR", "/data"),
-		SendTimeout:   durationEnv("ALL_NOTIFY_SEND_TIMEOUT", 10*time.Second),
-		LogMaxBytes:   int64Env("ALL_NOTIFY_LOG_MAX_BYTES", 10*1024*1024),
-		LogMaxBackups: intEnv("ALL_NOTIFY_LOG_MAX_BACKUPS", 5),
+	cfg, err := parseConfig(os.Args[1:])
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			os.Exit(0)
+		}
+		log.Fatalf("启动参数无效: %v", err)
 	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
@@ -80,6 +81,27 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		logger.Printf("服务关闭失败: %v", err)
 	}
+}
+
+func parseConfig(args []string) (server.Config, error) {
+	cfg := server.Config{
+		Addr:          env("ALL_NOTIFY_ADDR", ":8080"),
+		DataDir:       env("ALL_NOTIFY_DATA_DIR", "/data"),
+		SendTimeout:   durationEnv("ALL_NOTIFY_SEND_TIMEOUT", 10*time.Second),
+		LogMaxBytes:   int64Env("ALL_NOTIFY_LOG_MAX_BYTES", 10*1024*1024),
+		LogMaxBackups: intEnv("ALL_NOTIFY_LOG_MAX_BACKUPS", 5),
+	}
+
+	flags := flag.NewFlagSet("all-notify", flag.ContinueOnError)
+	flags.StringVar(&cfg.Addr, "addr", cfg.Addr, "HTTP 监听地址，例如 :8080")
+	flags.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "数据和日志目录")
+	flags.DurationVar(&cfg.SendTimeout, "send-timeout", cfg.SendTimeout, "单个发送目标超时时间，例如 10s")
+	flags.Int64Var(&cfg.LogMaxBytes, "log-max-bytes", cfg.LogMaxBytes, "单个运行日志文件最大字节数")
+	flags.IntVar(&cfg.LogMaxBackups, "log-max-backups", cfg.LogMaxBackups, "运行日志轮转保留文件数")
+	if err := flags.Parse(args); err != nil {
+		return server.Config{}, err
+	}
+	return cfg, nil
 }
 
 func env(key, fallback string) string {

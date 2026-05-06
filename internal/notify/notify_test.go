@@ -56,6 +56,98 @@ func TestDispatcherSendsBarkAndNtfyHTTP(t *testing.T) {
 	}
 }
 
+func TestDispatcherSendsBoardAppendAndOverwriteHTTP(t *testing.T) {
+	type observedRequest struct {
+		path          string
+		authorization string
+		action        string
+		content       string
+	}
+	seen := make(chan observedRequest, 2)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Action  string `json:"action"`
+			Content string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		seen <- observedRequest{
+			path:          r.URL.Path,
+			authorization: r.Header.Get("Authorization"),
+			action:        payload.Action,
+			content:       payload.Content,
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer backend.Close()
+
+	dispatcher := NewDispatcher(2 * time.Second)
+	for _, tc := range []struct {
+		name string
+		mode string
+		want string
+	}{
+		{name: "append", mode: "append", want: "append"},
+		{name: "overwrite", mode: "new", want: "new"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			boardConfig, _ := json.Marshal(BoardConfig{
+				ServerURL: backend.URL,
+				BoardID:   "hr",
+				APIToken:  "admin123",
+				Mode:      tc.mode,
+			})
+			target := model.Target{ID: 3, Name: "board", Type: model.TargetTypeBoard, Config: string(boardConfig), Enabled: true}
+			results := dispatcher.SendAll(context.Background(), model.Notification{
+				Title:   "Ignored",
+				Message: "公告内容",
+				URL:     "https://example.com/detail",
+			}, []model.Target{target})
+			if len(results) != 1 || results[0].Status != model.StatusSuccess {
+				t.Fatalf("unexpected result: %+v", results)
+			}
+
+			got := <-seen
+			if got.path != "/api/update/hr" {
+				t.Fatalf("unexpected path: %s", got.path)
+			}
+			if got.authorization != "Bearer admin123" {
+				t.Fatalf("unexpected auth header: %s", got.authorization)
+			}
+			if got.action != tc.want {
+				t.Fatalf("unexpected action: %s", got.action)
+			}
+			if got.content != "公告内容\n\nhttps://example.com/detail" {
+				t.Fatalf("unexpected content: %q", got.content)
+			}
+		})
+	}
+}
+
+func TestValidateBoardTargetMode(t *testing.T) {
+	validConfig, _ := json.Marshal(BoardConfig{
+		ServerURL: "https://board.12342345.xyz",
+		BoardID:   "hr",
+		APIToken:  "admin123",
+		Mode:      "new",
+	})
+	if err := ValidateTarget(model.Target{Name: "board", Type: model.TargetTypeBoard, Config: string(validConfig), Enabled: true}); err != nil {
+		t.Fatalf("valid board target rejected: %v", err)
+	}
+
+	invalidConfig, _ := json.Marshal(BoardConfig{
+		ServerURL: "https://board.12342345.xyz",
+		BoardID:   "hr",
+		APIToken:  "admin123",
+		Mode:      "clear",
+	})
+	if err := ValidateTarget(model.Target{Name: "board", Type: model.TargetTypeBoard, Config: string(invalidConfig), Enabled: true}); err == nil {
+		t.Fatal("invalid board mode accepted")
+	}
+}
+
 func TestSMTPSendWithFakeServer(t *testing.T) {
 	smtpServer, messages := startFakeSMTP(t)
 	defer smtpServer.Close()

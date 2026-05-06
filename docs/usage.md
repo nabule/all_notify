@@ -25,32 +25,140 @@ docker compose up -d --build
 - `all_notify.db`：SQLite 数据库，包含配置和发送日志。
 - `logs/app.log`：运行日志。
 
-## 2. 环境变量
+## 2. 编译和运行
 
-可在 `docker-compose.yml` 中调整：
+### 2.1 前置条件
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `ALL_NOTIFY_ADDR` | `:8080` | HTTP 监听地址 |
-| `ALL_NOTIFY_DATA_DIR` | `/data` | 数据和日志目录 |
-| `ALL_NOTIFY_SEND_TIMEOUT` | `10s` | 单个发送目标超时时间 |
-| `ALL_NOTIFY_LOG_MAX_BYTES` | `10485760` | 单个运行日志文件最大字节数 |
-| `ALL_NOTIFY_LOG_MAX_BACKUPS` | `5` | 运行日志轮转保留文件数 |
+本地编译需要 Go 1.23 或更新版本：
 
-## 3. Web 页面使用流程
+```bash
+go version
+```
+
+服务是单个 Go HTTP 程序，入口为 `./cmd/all-notify`。默认监听 `:8080`，默认数据目录为 `/data`；单文件运行时推荐使用启动参数显式传入配置。
+
+### 2.2 本机开发运行
+
+Linux/macOS/WSL：
+
+```bash
+go run ./cmd/all-notify -- -addr=:8080 -data-dir=./data -send-timeout=10s
+```
+
+Windows PowerShell：
+
+```powershell
+go run .\cmd\all-notify -- -addr=:8080 -data-dir=.\data -send-timeout=10s
+```
+
+启动后访问：
+
+- Web 配置页面：`http://localhost:8080`
+- 健康检查：`http://localhost:8080/healthz`
+
+### 2.3 Linux x64 单文件
+
+在 Linux/macOS/WSL shell 中编译：
+
+```bash
+mkdir -p dist
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/all-notify-linux-amd64 ./cmd/all-notify
+```
+
+运行：
+
+```bash
+chmod +x dist/all-notify-linux-amd64
+./dist/all-notify-linux-amd64 -addr=:8080 -data-dir=./data -send-timeout=10s -log-max-bytes=10485760 -log-max-backups=5
+```
+
+### 2.4 Windows x64 单文件
+
+在 Windows PowerShell 中编译：
+
+```powershell
+New-Item -ItemType Directory -Force dist | Out-Null
+$env:CGO_ENABLED="0"
+$env:GOOS="windows"
+$env:GOARCH="amd64"
+go build -trimpath -ldflags="-s -w" -o dist/all-notify-windows-amd64.exe ./cmd/all-notify
+```
+
+运行：
+
+```powershell
+.\dist\all-notify-windows-amd64.exe -addr=:8080 -data-dir=.\data -send-timeout=10s -log-max-bytes=10485760 -log-max-backups=5
+```
+
+### 2.5 macOS 单文件
+
+Apple Silicon：
+
+```bash
+mkdir -p dist
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/all-notify-darwin-arm64 ./cmd/all-notify
+./dist/all-notify-darwin-arm64 -addr=:8080 -data-dir=./data -send-timeout=10s
+```
+
+Intel Mac：
+
+```bash
+mkdir -p dist
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/all-notify-darwin-amd64 ./cmd/all-notify
+./dist/all-notify-darwin-amd64 -addr=:8080 -data-dir=./data -send-timeout=10s
+```
+
+### 2.6 Docker 运行
+
+直接使用 Docker：
+
+```bash
+docker build -t all-notify:local .
+docker run --rm -p 8080:8080 -v "$PWD/data:/data" all-notify:local -addr=:8080 -data-dir=/data -send-timeout=10s
+```
+
+Windows PowerShell 使用 Docker 挂载本地数据目录：
+
+```powershell
+docker build -t all-notify:local .
+docker run --rm -p 8080:8080 -v "${PWD}\data:/data" all-notify:local -addr=:8080 -data-dir=/data -send-timeout=10s
+```
+
+## 3. 启动参数
+
+单文件程序推荐使用命令行参数启动：
+
+```bash
+./all-notify -addr=:8080 -data-dir=./data -send-timeout=10s -log-max-bytes=10485760 -log-max-backups=5
+```
+
+`docker-compose.yml` 也通过 `command` 向容器内的单文件程序传参。参数优先级高于同名环境变量，环境变量仅作为兼容默认值。
+
+| 参数 | 环境变量 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `-addr` | `ALL_NOTIFY_ADDR` | `:8080` | HTTP 监听地址 |
+| `-data-dir` | `ALL_NOTIFY_DATA_DIR` | `/data` | 数据和日志目录 |
+| `-send-timeout` | `ALL_NOTIFY_SEND_TIMEOUT` | `10s` | 单个发送目标超时时间 |
+| `-log-max-bytes` | `ALL_NOTIFY_LOG_MAX_BYTES` | `10485760` | 单个运行日志文件最大字节数 |
+| `-log-max-backups` | `ALL_NOTIFY_LOG_MAX_BACKUPS` | `5` | 运行日志轮转保留文件数 |
+
+## 4. Web 页面使用流程
 
 打开 `http://localhost:8080` 后，按以下顺序配置：
 
-1. 进入“发送目标”，新增 Bark、ntfy 或 SMTP 目标。
+1. 进入“发送目标”，新增 Bark、ntfy、SMTP 或公告板目标。
 2. 在目标列表点击“测试”，确认该目标可以收到测试通知。
 3. 进入“通知入口”，新增入口并选择一个或多个发送目标。
-4. 在入口列表点击“测试”，确认入口关联的所有目标都可以发送。
-5. 调用 `/send/{key}` 发送业务通知。
-6. 在“发送日志”查看发送结果和目标级错误明细。
+4. 在入口列表查看该入口对应的 curl 和 Python 请求示例。
+5. 在入口列表点击“测试”，确认入口关联的所有目标都可以发送。
+6. 调用 `/send/{key}` 发送业务通知。
+7. 在“发送日志”查看发送结果和目标级错误明细。
+
+页面顶部的“使用说明”页签提供配置流程、标准字段和返回状态说明，适合在部署后直接给调用方查看。
 
 服务不做鉴权。请只部署在可信网络或由外部网关控制访问。
 
-## 4. 配置发送目标
+## 5. 配置发送目标
 
 ### Bark
 
@@ -133,7 +241,29 @@ Web 页面选择类型 `smtp`，配置示例：
 - `starttls`：连接后升级 TLS，常用于 587 端口。
 - `tls`：直接 TLS 连接，常用于 465 端口。
 
-## 5. 创建通知入口
+### 公告板
+
+Web 页面选择类型 `board`，配置示例：
+
+```json
+{
+  "server_url": "https://board.12342345.xyz",
+  "board_id": "hr",
+  "api_token": "admin123",
+  "mode": "append"
+}
+```
+
+字段说明：
+
+- `server_url`：公告板服务地址，例如 `https://board.12342345.xyz`。
+- `board_id`：公告板频道 ID，例如 `hr` 或 `tech`。
+- `api_token`：公告板接口 Bearer Token。
+- `mode`：写入模式，`append` 表示追加公告，`new` 表示覆盖当前频道并新建一条公告；未填时默认 `append`。
+
+公告板发送时会调用 `POST {server_url}/api/update/{board_id}`，请求体为 `{"action": mode, "content": message}`。如果发送请求带有 `url` 或 `click` 字段，服务会把 URL 追加到公告内容末尾。
+
+## 6. 创建通知入口
 
 通知入口通过 `key` 暴露发送 URL。假设入口 key 为 `server-alert`，发送地址就是：
 
@@ -146,23 +276,52 @@ http://localhost:8080/send/server-alert
 - 2 个 Bark 设备。
 - 1 个 ntfy topic。
 - 1 组邮件收件人。
+- 1 个公告板频道。
 
 配置修改后不需要重启服务，下一次发送请求会读取最新配置。
 
-## 6. 发送通知
+Web 页面会在每个入口下面按当前访问域名和入口 key 自动生成请求示例，包含 curl 和 Python 两类示例。复制前请确认页面访问地址就是业务调用方可访问的服务地址。
 
-### GET
+## 7. 发送通知
+
+下面继续以入口 key `server-alert` 为例。
+
+### curl GET
 
 ```bash
 curl "http://localhost:8080/send/server-alert?title=CPU&message=CPU%20usage%20high"
 ```
 
-### POST JSON
+### curl POST JSON
 
 ```bash
 curl -X POST "http://localhost:8080/send/server-alert" \
   -H "Content-Type: application/json" \
   -d '{"title":"CPU","message":"CPU usage high","url":"https://example.com","tags":["warning"]}'
+```
+
+### Python POST JSON
+
+```python
+import json
+import urllib.request
+
+url = "http://localhost:8080/send/server-alert"
+payload = {
+    "title": "CPU",
+    "message": "CPU usage high",
+    "url": "https://example.com",
+    "tags": ["warning"],
+}
+
+req = urllib.request.Request(
+    url,
+    data=json.dumps(payload).encode("utf-8"),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+with urllib.request.urlopen(req, timeout=10) as resp:
+    print(resp.status, resp.read().decode("utf-8"))
 ```
 
 ### POST 表单
@@ -205,7 +364,7 @@ curl -X POST "http://localhost:8080/send/server-alert?title=CPU" \
 - 总耗时。
 - 每个目标的状态、耗时、错误和响应。
 
-## 7. 测试功能
+## 8. 测试功能
 
 Web 页面提供两类测试：
 
@@ -228,7 +387,7 @@ curl -X POST "http://localhost:8080/api/routes/1/test" \
 
 测试结果会写入发送日志。即使测试失败，也可以在日志详情中看到目标级错误，例如连接失败、SMTP 认证失败或 HTTP 状态码错误。
 
-## 8. 日志查看和裁剪
+## 9. 日志查看和裁剪
 
 Web 页面“发送日志”可查看：
 
@@ -247,7 +406,7 @@ Web 页面“运行日志”可查看服务运行日志。
 
 运行日志按文件大小自动轮转，默认单文件 10MB，保留 5 个备份。
 
-## 9. 常见问题
+## 10. 常见问题
 
 ### 保存配置后没有生效
 

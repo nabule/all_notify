@@ -3,9 +3,10 @@ package model
 import "time"
 
 const (
-	TargetTypeBark = "bark"
-	TargetTypeNtfy = "ntfy"
-	TargetTypeSMTP = "smtp"
+	TargetTypeBark  = "bark"
+	TargetTypeNtfy  = "ntfy"
+	TargetTypeSMTP  = "smtp"
+	TargetTypeBoard = "board"
 
 	StatusSuccess = "success"
 	StatusFailed  = "failed"

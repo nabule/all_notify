@@ -23,6 +23,7 @@
 - `400`：请求字段无效。
 
 返回体包含请求 ID、入口 key、整体状态、目标数量、成功/失败数量、耗时，以及每个目标的发送结果。
+列表类 API 在没有数据时返回空数组 `[]`，便于 Web 页面和外部调用方按数组处理。
 
 配置测试接口：
 
@@ -30,6 +31,13 @@
 - `POST /api/routes/{id}/test`：通过该通知入口关联的所有启用目标发送测试通知。
 - 测试接口可传普通通知 JSON；不传请求体时使用默认测试标题和正文。
 - 测试结果写入发送日志，失败时仍返回目标级错误明细。
+
+## Web 页面行为
+
+- 顶部提供“使用说明”页签，展示配置流程、标准字段、返回状态和部署暴露提醒。
+- “通知入口”列表按每个入口的 `key` 和当前 `window.location.origin` 自动生成发送 URL。
+- 每个入口展示 curl 和 Python 两类请求示例，示例使用 `GET /send/{key}` 和 `POST /send/{key}` JSON 发送。
+- 示例仅用于调用发送入口，不改变配置 API 或发送 API 的语义。
 
 ## 数据模型
 
@@ -42,7 +50,7 @@
 
 `targets` 保存发送目标：
 
-- `type`：`bark`、`ntfy`、`smtp`。
+- `type`：`bark`、`ntfy`、`smtp`、`board`。
 - `config`：目标配置 JSON。
 - `enabled`：禁用后发送时忽略。
 
@@ -57,6 +65,8 @@ Bark 使用 JSON POST。单设备发送到 `/{device_key}`，多设备发送到 
 ntfy 使用 HTTP POST 到 `{server_url}/{topic}`，正文为纯文本，标题、优先级、标签和点击链接通过请求头传递。
 
 SMTP 使用标准 SMTP 协议，支持 `none`、`starttls`、`tls` 三种安全模式，正文为 UTF-8 纯文本邮件。
+
+公告板使用 JSON POST 到 `{server_url}/api/update/{board_id}`，鉴权头为 `Authorization: Bearer {api_token}`。目标配置中的 `mode` 控制 `action` 字段：`append` 表示追加公告，`new` 表示覆盖当前频道并写入新公告；未配置时默认 `append`。
 
 ## 稳定性策略
 
