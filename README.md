@@ -84,7 +84,7 @@ curl -X POST "http://localhost:8080/send/server-alert?title=CPU" \
 - `priority`、`level`：通知优先级。
 - `tags`、`tag`：逗号分隔标签，JSON 也支持数组。
 
-全部目标发送成功返回 `200`；任一目标失败返回 `502`；入口不存在或禁用返回 `404`。
+全部目标发送成功返回 `200`；同步重试后仍有任一目标失败返回 `502`；入口不存在或禁用返回 `404`。
 
 ## 配置 API
 
@@ -103,9 +103,9 @@ curl -X POST "http://localhost:8080/send/server-alert?title=CPU" \
 - `GET /api/logs`：发送日志。
 - `GET /api/logs/{id}`：发送日志详情。
 - `GET /api/runtime-logs`：运行日志。
-- `GET /api/settings`、`PUT /api/settings`：日志裁剪设置。
+- `GET /api/settings`、`PUT /api/settings`：日志裁剪和发送重试设置。
 
-配置保存在 SQLite 中。发送请求每次都会读取当前配置，因此 Web 或 API 修改后立即生效。
+配置保存在 SQLite 中。发送请求每次都会读取当前配置，因此 Web 或 API 修改后立即生效。发送失败会按全局设置自动重试，`retry_max_retries` 为初次失败后的额外重试次数：`0` 表示不重试，正数表示最多重试 N 次，`-1` 表示失败目标转入进程内后台无限重试。重试任务每次重试前都会重新读取设置，因此修改重试次数或间隔会立即影响正在进行的重试。
 
 Web 页面中，发送目标和通知入口列表都提供“测试”按钮。测试会发送默认测试消息，也会写入发送日志；如果目标不可达，页面会显示失败详情。
 

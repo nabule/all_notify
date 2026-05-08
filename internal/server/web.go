@@ -117,6 +117,9 @@ const indexHTML = `<!doctype html>
         <div class="panel-title"><h2>日志裁剪</h2></div>
         <label>发送日志保留天数<input id="settingDays" type="number" min="1" required></label>
         <label>发送日志最大条数<input id="settingRows" type="number" min="1" required></label>
+        <div class="panel-title"><h2>发送重试</h2></div>
+        <label>发送失败重试次数<input id="settingRetryMax" type="number" min="-1" required></label>
+        <label>重试间隔秒数<input id="settingRetryInterval" type="number" min="1" required></label>
         <button type="submit">保存设置</button>
       </form>
     </section>
@@ -441,7 +444,15 @@ async function loadLogs() {
 
 async function showLog(id) {
   const detail = await api("/api/logs/" + id);
+  activateTab("logs");
   document.getElementById("logDetail").textContent = JSON.stringify(detail, null, 2);
+}
+
+function activateTab(tab) {
+  document.querySelectorAll(".tabs button,.tab").forEach(el => el.classList.remove("active"));
+  const button = document.querySelector('[data-tab="' + tab + '"]');
+  if (button) button.classList.add("active");
+  document.getElementById(tab).classList.add("active");
 }
 
 async function apiAllowError(path, options = {}) {
@@ -455,9 +466,7 @@ async function apiAllowError(path, options = {}) {
 }
 
 function renderTestResult(result) {
-  document.querySelectorAll(".tabs button,.tab").forEach(el => el.classList.remove("active"));
-  document.querySelector('[data-tab="logs"]').classList.add("active");
-  document.getElementById("logs").classList.add("active");
+  activateTab("logs");
   document.getElementById("logDetail").textContent = JSON.stringify(result.data, null, 2);
   const data = result.data || {};
   if (result.ok) {
@@ -476,6 +485,8 @@ async function loadSettings() {
   const settings = await api("/api/settings");
   document.getElementById("settingDays").value = settings.log_retention_days;
   document.getElementById("settingRows").value = settings.log_max_rows;
+  document.getElementById("settingRetryMax").value = settings.retry_max_retries;
+  document.getElementById("settingRetryInterval").value = settings.retry_interval_seconds;
 }
 
 async function saveSettings(event) {
@@ -484,7 +495,9 @@ async function saveSettings(event) {
     method: "PUT",
     body: JSON.stringify({
       log_retention_days: Number(document.getElementById("settingDays").value),
-      log_max_rows: Number(document.getElementById("settingRows").value)
+      log_max_rows: Number(document.getElementById("settingRows").value),
+      retry_max_retries: Number(document.getElementById("settingRetryMax").value),
+      retry_interval_seconds: Number(document.getElementById("settingRetryInterval").value)
     })
   });
   toast("设置已保存");

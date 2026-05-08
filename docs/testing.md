@@ -13,11 +13,14 @@ docker run --rm -v "$PWD":/src -w /src golang:1.23-alpine sh -lc "go test ./..."
 - GET、JSON、表单、纯文本请求解析。
 - 配置 API 保存发送目标、保存通知入口、列表查询入口和目标关联。
 - Web 首页包含使用说明入口，以及通知入口 curl/Python 示例渲染逻辑。
+- Web 概览日志详情会切换到发送日志页签，设置页包含发送重试配置。
 - 发送目标测试接口、通知入口测试接口会实际发送并写入日志。
 - SQLite 入口列表查询不会因为单连接嵌套查询卡死。
+- SQLite 设置包含重试默认值，老数据库迁移会补齐缺失的重试设置。
 - Bark、ntfy 和公告板发送器对本地 HTTP test server 的真实请求。
 - SMTP 发送器对本地 fake SMTP server 的真实协议交互。
 - HTTP 服务配置 API、发送 API 和发送日志落库。
+- 发送失败有限重试、重试耗尽、运行中修改重试配置立即生效、无限后台重试停止。
 - SQLite 发送日志裁剪。
 
 ## Docker 构建测试

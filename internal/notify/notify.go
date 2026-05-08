@@ -120,6 +120,12 @@ func (d *Dispatcher) SendAll(ctx context.Context, notification model.Notificatio
 	return results
 }
 
+func (d *Dispatcher) SendOne(ctx context.Context, notification model.Notification, target model.Target) Result {
+	targetCtx, cancel := context.WithTimeout(ctx, d.Timeout)
+	defer cancel()
+	return d.sendOne(targetCtx, notification, target)
+}
+
 func (d *Dispatcher) sendOne(ctx context.Context, notification model.Notification, target model.Target) Result {
 	start := time.Now()
 	result := Result{

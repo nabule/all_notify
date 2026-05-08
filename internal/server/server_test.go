@@ -172,6 +172,333 @@ func TestSendAPIReadsCurrentConfigAndWritesLogs(t *testing.T) {
 	}
 }
 
+func TestSendAPIRetriesFailedTargetUntilSuccess(t *testing.T) {
+	attempts := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "temporary failure", http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer backend.Close()
+
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateSettings(context.Background(), model.Settings{
+		LogRetentionDays:     30,
+		LogMaxRows:           100000,
+		RetryMaxRetries:      1,
+		RetryIntervalSeconds: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	targetConfig, _ := json.Marshal(map[string]any{
+		"server_url": backend.URL,
+		"device_key": "device-1",
+	})
+	target, err := st.CreateTarget(context.Background(), model.Target{
+		Name:    "bark",
+		Type:    model.TargetTypeBark,
+		Config:  string(targetConfig),
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRoute(context.Background(), model.Route{
+		Key:       "retry",
+		Name:      "Retry",
+		Enabled:   true,
+		TargetIDs: []int64{target.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New(Config{SendTimeout: 2 * time.Second}, st, log.New(io.Discard, "", 0), filepath.Join(tempDir, "app.log"))
+	server := httptest.NewServer(app.Routes())
+	defer server.Close()
+
+	res, err := http.Post(server.URL+"/send/retry", "application/json", strings.NewReader(`{"title":"Disk","message":"Full"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts=%d, want 2", attempts)
+	}
+}
+
+func TestSendAPIRetryExhaustionReturnsFailure(t *testing.T) {
+	attempts := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "still down", http.StatusBadGateway)
+	}))
+	defer backend.Close()
+
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateSettings(context.Background(), model.Settings{
+		LogRetentionDays:     30,
+		LogMaxRows:           100000,
+		RetryMaxRetries:      1,
+		RetryIntervalSeconds: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	targetConfig, _ := json.Marshal(map[string]any{
+		"server_url": backend.URL,
+		"device_key": "device-1",
+	})
+	target, err := st.CreateTarget(context.Background(), model.Target{
+		Name:    "bark",
+		Type:    model.TargetTypeBark,
+		Config:  string(targetConfig),
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRoute(context.Background(), model.Route{
+		Key:       "retry-fail",
+		Name:      "Retry Fail",
+		Enabled:   true,
+		TargetIDs: []int64{target.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New(Config{SendTimeout: 2 * time.Second}, st, log.New(io.Discard, "", 0), filepath.Join(tempDir, "app.log"))
+	server := httptest.NewServer(app.Routes())
+	defer server.Close()
+
+	res, err := http.Post(server.URL+"/send/retry-fail", "application/json", strings.NewReader(`{"title":"Disk","message":"Full"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusBadGateway {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts=%d, want 2", attempts)
+	}
+	logs, err := st.ListSendLogs(context.Background(), store.LogFilter{RouteKey: "retry-fail", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].Status != model.StatusFailed {
+		t.Fatalf("unexpected logs: %+v", logs)
+	}
+	detail, err := st.GetSendLog(context.Background(), logs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.TargetLogs) != 1 || !strings.Contains(detail.TargetLogs[0].Error, "HTTP 502") {
+		t.Fatalf("unexpected target logs: %+v", detail.TargetLogs)
+	}
+}
+
+func TestRetryReadsSettingsBetweenAttempts(t *testing.T) {
+	attempts := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "still down", http.StatusBadGateway)
+	}))
+	defer backend.Close()
+
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateSettings(context.Background(), model.Settings{
+		LogRetentionDays:     30,
+		LogMaxRows:           100000,
+		RetryMaxRetries:      3,
+		RetryIntervalSeconds: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	targetConfig, _ := json.Marshal(map[string]any{
+		"server_url": backend.URL,
+		"device_key": "device-1",
+	})
+	target, err := st.CreateTarget(context.Background(), model.Target{
+		Name:    "bark",
+		Type:    model.TargetTypeBark,
+		Config:  string(targetConfig),
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRoute(context.Background(), model.Route{
+		Key:       "live-settings",
+		Name:      "Live Settings",
+		Enabled:   true,
+		TargetIDs: []int64{target.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New(Config{SendTimeout: 2 * time.Second}, st, log.New(io.Discard, "", 0), filepath.Join(tempDir, "app.log"))
+	server := httptest.NewServer(app.Routes())
+	defer server.Close()
+
+	done := make(chan int, 1)
+	go func() {
+		res, err := http.Post(server.URL+"/send/live-settings", "application/json", strings.NewReader(`{"title":"Disk","message":"Full"}`))
+		if err != nil {
+			done <- 0
+			return
+		}
+		defer res.Body.Close()
+		done <- res.StatusCode
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for attempts == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("first attempt did not happen")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if _, err := st.UpdateSettings(context.Background(), model.Settings{
+		LogRetentionDays:     30,
+		LogMaxRows:           100000,
+		RetryMaxRetries:      0,
+		RetryIntervalSeconds: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case status := <-done:
+		if status != http.StatusBadGateway {
+			t.Fatalf("status=%d, want 502", status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("send did not stop after retry settings changed")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts=%d, want 1 after lowering retry limit", attempts)
+	}
+}
+
+func TestInfiniteRetryReturnsAndBackgroundStopsWhenSettingsChange(t *testing.T) {
+	attempts := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "still down", http.StatusBadGateway)
+	}))
+	defer backend.Close()
+
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateSettings(context.Background(), model.Settings{
+		LogRetentionDays:     30,
+		LogMaxRows:           100000,
+		RetryMaxRetries:      -1,
+		RetryIntervalSeconds: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	targetConfig, _ := json.Marshal(map[string]any{
+		"server_url": backend.URL,
+		"device_key": "device-1",
+	})
+	target, err := st.CreateTarget(context.Background(), model.Target{
+		Name:    "bark",
+		Type:    model.TargetTypeBark,
+		Config:  string(targetConfig),
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRoute(context.Background(), model.Route{
+		Key:       "infinite",
+		Name:      "Infinite",
+		Enabled:   true,
+		TargetIDs: []int64{target.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New(Config{SendTimeout: 2 * time.Second}, st, log.New(io.Discard, "", 0), filepath.Join(tempDir, "app.log"))
+	server := httptest.NewServer(app.Routes())
+	defer server.Close()
+
+	start := time.Now()
+	res, err := http.Post(server.URL+"/send/infinite", "application/json", strings.NewReader(`{"title":"Disk","message":"Full"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusBadGateway {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("infinite retry blocked request for %s", time.Since(start))
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts=%d, want first attempt only before background retry", attempts)
+	}
+	if _, err := st.UpdateSettings(context.Background(), model.Settings{
+		LogRetentionDays:     30,
+		LogMaxRows:           100000,
+		RetryMaxRetries:      0,
+		RetryIntervalSeconds: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	app.bgRetries.Wait()
+	if attempts != 1 {
+		t.Fatalf("attempts=%d, background should stop before retry after settings change", attempts)
+	}
+}
+
 func TestConfigAPISavesTargetsAndRoutes(t *testing.T) {
 	tempDir := t.TempDir()
 	st, err := store.Open(filepath.Join(tempDir, "test.db"))
@@ -410,6 +737,9 @@ func TestWebPageIncludesUsageEntryAndRouteExamples(t *testing.T) {
 		`data-tab="help"`,
 		"使用说明",
 		"routeExamples(route)",
+		"activateTab(\"logs\")",
+		"settingRetryMax",
+		"retry_max_retries",
 		"curl",
 		"urllib.request",
 		`<option value="board">board</option>`,

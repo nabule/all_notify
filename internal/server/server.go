@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"all_notify/internal/model"
@@ -36,6 +37,7 @@ type Server struct {
 	dispatcher *notify.Dispatcher
 	logger     *log.Logger
 	appLogPath string
+	bgRetries  sync.WaitGroup
 }
 
 func New(cfg Config, st *store.Store, logger *log.Logger, appLogPath string) *Server {
@@ -148,7 +150,7 @@ func (s *Server) dispatchAndLog(ctx context.Context, method, rawBody, remoteAddr
 		}
 		return entry, http.StatusBadGateway
 	}
-	results := s.dispatcher.SendAll(ctx, notification, route.Targets)
+	results := s.sendTargetsWithRetry(ctx, notification, route.Targets)
 	requestID := newRequestID()
 	createdAt := time.Now()
 	success, failed := 0, 0
@@ -206,6 +208,127 @@ func (s *Server) dispatchAndLog(ctx context.Context, method, rawBody, remoteAddr
 		code = http.StatusBadGateway
 	}
 	return entry, code
+}
+
+func (s *Server) sendTargetsWithRetry(ctx context.Context, notification model.Notification, targets []model.Target) []notify.Result {
+	results := make([]notify.Result, len(targets))
+	var wg sync.WaitGroup
+	for i, target := range targets {
+		i, target := i, target
+		results[i] = notify.Result{
+			TargetID:   target.ID,
+			TargetName: target.Name,
+			TargetType: target.Type,
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = s.sendTargetWithRetry(ctx, notification, target)
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
+func (s *Server) sendTargetWithRetry(ctx context.Context, notification model.Notification, target model.Target) notify.Result {
+	attempt := 0
+	var last notify.Result
+	for {
+		last = s.dispatcher.SendOne(ctx, notification, target)
+		if last.Status == model.StatusSuccess {
+			return last
+		}
+
+		settings, err := s.store.Settings(ctx)
+		if err != nil {
+			s.logger.Printf("读取重试设置失败 target_id=%d err=%v", target.ID, err)
+			return last
+		}
+		if settings.RetryMaxRetries == -1 {
+			s.startBackgroundRetry(notification, target, attempt)
+			return last
+		}
+		if attempt >= settings.RetryMaxRetries {
+			return last
+		}
+		nextAttempt, ok := s.waitForNextRetry(ctx, attempt)
+		if !ok {
+			return last
+		}
+		attempt = nextAttempt
+	}
+}
+
+func (s *Server) startBackgroundRetry(notification model.Notification, target model.Target, completedRetries int) {
+	s.bgRetries.Add(1)
+	go func() {
+		defer s.bgRetries.Done()
+		retriesCompleted := completedRetries
+		for {
+			settings, err := s.store.Settings(context.Background())
+			if err != nil {
+				s.logger.Printf("读取后台重试设置失败 target_id=%d err=%v", target.ID, err)
+				return
+			}
+			if settings.RetryMaxRetries >= 0 && retriesCompleted >= settings.RetryMaxRetries {
+				s.logger.Printf("后台重试停止 target_id=%d target_name=%q retries=%d reason=retry_limit_changed", target.ID, target.Name, retriesCompleted)
+				return
+			}
+			nextRetry, ok := s.waitForNextRetry(context.Background(), retriesCompleted)
+			if !ok {
+				return
+			}
+			retriesCompleted = nextRetry
+			result := s.dispatcher.SendOne(context.Background(), notification, target)
+			if result.Status == model.StatusSuccess {
+				s.logger.Printf("后台重试成功 target_id=%d target_name=%q retries=%d", target.ID, target.Name, retriesCompleted)
+				return
+			}
+			s.logger.Printf("后台重试失败 target_id=%d target_name=%q retries=%d err=%s", target.ID, target.Name, retriesCompleted, result.Error)
+		}
+	}()
+}
+
+func (s *Server) waitForNextRetry(ctx context.Context, retriesCompleted int) (int, bool) {
+	start := time.Now()
+	for {
+		settings, err := s.store.Settings(ctx)
+		if err != nil {
+			s.logger.Printf("读取重试设置失败 err=%v", err)
+			return retriesCompleted, false
+		}
+		if settings.RetryMaxRetries >= 0 && retriesCompleted >= settings.RetryMaxRetries {
+			return retriesCompleted, false
+		}
+		if time.Since(start) >= retryInterval(settings) {
+			return retriesCompleted + 1, true
+		}
+		wait := 200 * time.Millisecond
+		if remaining := retryInterval(settings) - time.Since(start); remaining < wait {
+			wait = remaining
+		}
+		if !sleepWithContext(ctx, wait) {
+			return retriesCompleted, false
+		}
+	}
+}
+
+func retryInterval(settings model.Settings) time.Duration {
+	if settings.RetryIntervalSeconds <= 0 {
+		settings.RetryIntervalSeconds = model.DefaultSettings().RetryIntervalSeconds
+	}
+	return time.Duration(settings.RetryIntervalSeconds) * time.Second
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (s *Server) routes(w http.ResponseWriter, r *http.Request) {

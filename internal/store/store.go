@@ -120,7 +120,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 	defaults := model.DefaultSettings()
-	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO app_settings(key, value) VALUES('log_retention_days', ?), ('log_max_rows', ?)`, strconv.Itoa(defaults.LogRetentionDays), strconv.Itoa(defaults.LogMaxRows)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO app_settings(key, value) VALUES('log_retention_days', ?), ('log_max_rows', ?), ('retry_max_retries', ?), ('retry_interval_seconds', ?)`,
+		strconv.Itoa(defaults.LogRetentionDays), strconv.Itoa(defaults.LogMaxRows), strconv.Itoa(defaults.RetryMaxRetries), strconv.Itoa(defaults.RetryIntervalSeconds)); err != nil {
 		return err
 	}
 	return nil
@@ -439,17 +440,28 @@ func (s *Store) Settings(ctx context.Context) (model.Settings, error) {
 			settings.LogRetentionDays = n
 		case "log_max_rows":
 			settings.LogMaxRows = n
+		case "retry_max_retries":
+			settings.RetryMaxRetries = n
+		case "retry_interval_seconds":
+			settings.RetryIntervalSeconds = n
 		}
 	}
 	return settings, rows.Err()
 }
 
 func (s *Store) UpdateSettings(ctx context.Context, settings model.Settings) (model.Settings, error) {
+	defaults := model.DefaultSettings()
 	if settings.LogRetentionDays <= 0 {
-		settings.LogRetentionDays = model.DefaultSettings().LogRetentionDays
+		settings.LogRetentionDays = defaults.LogRetentionDays
 	}
 	if settings.LogMaxRows <= 0 {
-		settings.LogMaxRows = model.DefaultSettings().LogMaxRows
+		settings.LogMaxRows = defaults.LogMaxRows
+	}
+	if settings.RetryMaxRetries < -1 {
+		settings.RetryMaxRetries = defaults.RetryMaxRetries
+	}
+	if settings.RetryIntervalSeconds <= 0 {
+		settings.RetryIntervalSeconds = defaults.RetryIntervalSeconds
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -457,8 +469,10 @@ func (s *Store) UpdateSettings(ctx context.Context, settings model.Settings) (mo
 	}
 	defer tx.Rollback()
 	for key, value := range map[string]int{
-		"log_retention_days": settings.LogRetentionDays,
-		"log_max_rows":       settings.LogMaxRows,
+		"log_retention_days":     settings.LogRetentionDays,
+		"log_max_rows":           settings.LogMaxRows,
+		"retry_max_retries":      settings.RetryMaxRetries,
+		"retry_interval_seconds": settings.RetryIntervalSeconds,
 	} {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO app_settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, strconv.Itoa(value)); err != nil {
 			return model.Settings{}, err

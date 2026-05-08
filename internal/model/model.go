@@ -75,10 +75,12 @@ type TargetSendLog struct {
 }
 
 type Settings struct {
-	LogRetentionDays int `json:"log_retention_days"`
-	LogMaxRows       int `json:"log_max_rows"`
+	LogRetentionDays     int `json:"log_retention_days"`
+	LogMaxRows           int `json:"log_max_rows"`
+	RetryMaxRetries      int `json:"retry_max_retries"`
+	RetryIntervalSeconds int `json:"retry_interval_seconds"`
 }
 
 func DefaultSettings() Settings {
-	return Settings{LogRetentionDays: 30, LogMaxRows: 100000}
+	return Settings{LogRetentionDays: 30, LogMaxRows: 100000, RetryMaxRetries: 3, RetryIntervalSeconds: 5}
 }

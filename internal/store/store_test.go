@@ -44,6 +44,79 @@ func TestPruneSendLogsByAgeAndMaxRows(t *testing.T) {
 	}
 }
 
+func TestSettingsIncludeRetryDefaultsAndUpdates(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	settings, err := st.Settings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.RetryMaxRetries != 3 || settings.RetryIntervalSeconds != 5 {
+		t.Fatalf("unexpected retry defaults: %+v", settings)
+	}
+
+	updated, err := st.UpdateSettings(context.Background(), model.Settings{
+		LogRetentionDays:     10,
+		LogMaxRows:           200,
+		RetryMaxRetries:      -1,
+		RetryIntervalSeconds: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.RetryMaxRetries != -1 || updated.RetryIntervalSeconds != 2 {
+		t.Fatalf("retry settings were not saved: %+v", updated)
+	}
+
+	updated, err = st.UpdateSettings(context.Background(), model.Settings{
+		LogRetentionDays:     10,
+		LogMaxRows:           200,
+		RetryMaxRetries:      -2,
+		RetryIntervalSeconds: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := model.DefaultSettings()
+	if updated.RetryMaxRetries != defaults.RetryMaxRetries || updated.RetryIntervalSeconds != defaults.RetryIntervalSeconds {
+		t.Fatalf("invalid retry settings did not fall back to defaults: %+v", updated)
+	}
+}
+
+func TestMigrateAddsMissingRetrySettingsForExistingDatabase(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.db.ExecContext(context.Background(), `CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(context.Background(), `INSERT INTO app_settings(key, value) VALUES('log_retention_days', '7'), ('log_max_rows', '99')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := st.Settings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.LogRetentionDays != 7 || settings.LogMaxRows != 99 {
+		t.Fatalf("existing settings changed: %+v", settings)
+	}
+	if settings.RetryMaxRetries != 3 || settings.RetryIntervalSeconds != 5 {
+		t.Fatalf("missing retry settings not added: %+v", settings)
+	}
+}
+
 func TestListRoutesReturnsTargetIDsWithoutNestedQueryDeadlock(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
