@@ -37,11 +37,31 @@ function Copy-RequiredDirectory([string]$Source, [string]$Destination) {
     Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
 }
 
+function Write-Utf8NoBomLines([string]$Path, [string[]]$Lines) {
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllLines($Path, $Lines, $encoding)
+}
+
+function Resolve-CommandPath([string]$CommandName, [string[]]$Fallbacks) {
+    $command = Get-Command $CommandName -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    foreach ($fallback in $Fallbacks) {
+        if (Test-Path -LiteralPath $fallback -PathType Leaf) {
+            return $fallback
+        }
+    }
+
+    throw "找不到命令: $CommandName"
+}
+
 function Build-Binary([string]$Goos, [string]$Goarch, [string]$OutputPath) {
     $env:CGO_ENABLED = "0"
     $env:GOOS = $Goos
     $env:GOARCH = $Goarch
-    go build -trimpath -ldflags="-s -w" -o $OutputPath ./cmd/all-notify
+    & $script:GoCommand build -trimpath -ldflags="-s -w" -o $OutputPath ./cmd/all-notify
 }
 
 function Get-BinaryName([string]$Goos, [string]$Goarch) {
@@ -64,6 +84,8 @@ $releaseName = "all-notify-$Version"
 $releaseDir = Join-Path $outputRootFull $Version | Join-Path -ChildPath $releaseName
 $binDir = Join-Path $releaseDir "bin"
 $distDir = Join-Path $repoRoot "dist"
+$script:GoCommand = Resolve-CommandPath "go" @("C:\Program Files\Go\bin\go.exe")
+$tarCommand = Resolve-CommandPath "tar" @((Join-Path $env:SystemRoot "System32\tar.exe"))
 
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path $distDir | Out-Null
@@ -111,12 +133,12 @@ $hashLines = Get-ChildItem -LiteralPath $binDir -File | Sort-Object Name | ForEa
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
     "$hash  $($_.Name)"
 }
-$hashLines | Set-Content -Path (Join-Path $binDir "sha256sums.txt") -Encoding utf8
+Write-Utf8NoBomLines (Join-Path $binDir "sha256sums.txt") $hashLines
 
 $manifest = Get-ChildItem -LiteralPath $releaseDir -Recurse -File |
     Sort-Object FullName |
     ForEach-Object { Get-RelativePath $releaseDir $_.FullName }
-$manifest | Set-Content -Path (Join-Path $releaseDir "MANIFEST.txt") -Encoding utf8
+Write-Utf8NoBomLines (Join-Path $releaseDir "MANIFEST.txt") $manifest
 
 $releaseMd = @(
     "# All Notify $Version Release"
@@ -145,7 +167,7 @@ $releaseMd = @(
     ""
     "Codex skill 位于 ``skill/all-notify-usage``，可复制到 Codex skills 目录后使用。"
 )
-$releaseMd | Set-Content -Path (Join-Path $releaseDir "RELEASE.md") -Encoding utf8
+Write-Utf8NoBomLines (Join-Path $releaseDir "RELEASE.md") $releaseMd
 
 $archiveRoot = Split-Path -Parent $releaseDir
 $zipPath = Join-Path $archiveRoot "$releaseName.zip"
@@ -157,7 +179,13 @@ if (Test-Path -LiteralPath $tarPath) {
     Remove-Item -LiteralPath $tarPath -Force
 }
 Compress-Archive -Path $releaseDir -DestinationPath $zipPath -Force
-tar -czf $tarPath -C $archiveRoot $releaseName
+& $tarCommand -czf $tarPath -C $archiveRoot $releaseName
+if (-not (Test-Path -LiteralPath $tarPath -PathType Leaf)) {
+    throw "tar.gz 归档生成失败: $tarPath"
+}
+if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
+    throw "zip 归档生成失败: $zipPath"
+}
 
 $rootHashLines = @()
 foreach ($path in @($tarPath, $zipPath)) {
@@ -165,7 +193,7 @@ foreach ($path in @($tarPath, $zipPath)) {
     $rootHashLines += "$hash  $(Split-Path -Leaf $path)"
 }
 $rootHashLines += Get-Content -LiteralPath (Join-Path $binDir "sha256sums.txt") | ForEach-Object { "$_".Replace("  ", "  $releaseName/bin/") }
-$rootHashLines | Set-Content -Path (Join-Path $archiveRoot "sha256sums.txt") -Encoding utf8
+Write-Utf8NoBomLines (Join-Path $archiveRoot "sha256sums.txt") $rootHashLines
 
 Write-Host "发布目录: $releaseDir"
 Write-Host "ZIP: $zipPath"
