@@ -4,11 +4,30 @@ import (
 	"context"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"all_notify/internal/model"
 )
+
+func TestSQLiteDSNUsesNativePathWithEncodedPragmas(t *testing.T) {
+	path := filepath.Join("C:\\", "all notify", "all_notify.db")
+	dsn := sqliteDSN(path)
+
+	if !strings.HasPrefix(dsn, path+"?") {
+		t.Fatalf("dsn path prefix mismatch: %q", dsn)
+	}
+	for _, fragment := range []string{
+		"_pragma=busy_timeout%285000%29",
+		"_pragma=foreign_keys%28ON%29",
+		"_pragma=journal_mode%28WAL%29",
+	} {
+		if !strings.Contains(dsn, fragment) {
+			t.Fatalf("dsn missing %q: %q", fragment, dsn)
+		}
+	}
+}
 
 func TestPruneSendLogsByAgeAndMaxRows(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "test.db"))

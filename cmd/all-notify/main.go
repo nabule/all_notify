@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -17,6 +18,10 @@ import (
 	"all_notify/internal/store"
 )
 
+const defaultWindowsServiceName = "AllNotify"
+
+var windowsServiceName = defaultWindowsServiceName
+
 func main() {
 	cfg, err := parseConfig(os.Args[1:])
 	if err != nil {
@@ -26,26 +31,48 @@ func main() {
 		log.Fatalf("启动参数无效: %v", err)
 	}
 
+	handled, err := platformRun(cfg)
+	if err != nil {
+		log.Fatalf("服务运行失败: %v", err)
+	}
+	if handled {
+		return
+	}
+
+	if err := runConsole(cfg); err != nil {
+		log.Fatalf("服务退出: %v", err)
+	}
+}
+
+func runConsole(cfg server.Config) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runApp(ctx, cfg)
+}
+
+func runApp(ctx context.Context, cfg server.Config) error {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
-		log.Fatalf("创建数据目录失败: %v", err)
+		return fmt.Errorf("创建数据目录失败: %w", err)
 	}
 
 	appLogPath := filepath.Join(cfg.DataDir, "logs", "app.log")
 	logger, closeLog, err := server.NewAppLogger(appLogPath, cfg.LogMaxBytes, cfg.LogMaxBackups)
 	if err != nil {
-		log.Fatalf("初始化运行日志失败: %v", err)
+		return fmt.Errorf("初始化运行日志失败: %w", err)
 	}
 	defer closeLog()
 
 	dbPath := filepath.Join(cfg.DataDir, "all_notify.db")
 	st, err := store.Open(dbPath)
 	if err != nil {
-		logger.Fatalf("打开数据库失败: %v", err)
+		logger.Printf("打开数据库失败: %v", err)
+		return fmt.Errorf("打开数据库失败: %w", err)
 	}
 	defer st.Close()
 
 	if err := st.Migrate(context.Background()); err != nil {
-		logger.Fatalf("数据库迁移失败: %v", err)
+		logger.Printf("数据库迁移失败: %v", err)
+		return fmt.Errorf("数据库迁移失败: %w", err)
 	}
 
 	app := server.New(cfg, st, logger, appLogPath)
@@ -64,23 +91,28 @@ func main() {
 		errc <- srv.ListenAndServe()
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
 	select {
-	case sig := <-stop:
-		logger.Printf("received signal %s, shutting down", sig)
+	case <-ctx.Done():
+		logger.Printf("shutdown requested: %v", ctx.Err())
 	case err := <-errc:
 		if !errors.Is(err, http.ErrServerClosed) {
-			logger.Fatalf("服务退出: %v", err)
+			logger.Printf("服务退出: %v", err)
+			return fmt.Errorf("服务退出: %w", err)
 		}
+		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Printf("服务关闭失败: %v", err)
+		return fmt.Errorf("服务关闭失败: %w", err)
 	}
+	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Printf("服务退出: %v", err)
+		return fmt.Errorf("服务退出: %w", err)
+	}
+	return nil
 }
 
 func parseConfig(args []string) (server.Config, error) {
@@ -91,6 +123,7 @@ func parseConfig(args []string) (server.Config, error) {
 		LogMaxBytes:   int64Env("ALL_NOTIFY_LOG_MAX_BYTES", 10*1024*1024),
 		LogMaxBackups: intEnv("ALL_NOTIFY_LOG_MAX_BACKUPS", 5),
 	}
+	windowsServiceName = env("ALL_NOTIFY_SERVICE_NAME", defaultWindowsServiceName)
 
 	flags := flag.NewFlagSet("all-notify", flag.ContinueOnError)
 	flags.StringVar(&cfg.Addr, "addr", cfg.Addr, "HTTP 监听地址，例如 :8080")
@@ -98,6 +131,7 @@ func parseConfig(args []string) (server.Config, error) {
 	flags.DurationVar(&cfg.SendTimeout, "send-timeout", cfg.SendTimeout, "单个发送目标超时时间，例如 10s")
 	flags.Int64Var(&cfg.LogMaxBytes, "log-max-bytes", cfg.LogMaxBytes, "单个运行日志文件最大字节数")
 	flags.IntVar(&cfg.LogMaxBackups, "log-max-backups", cfg.LogMaxBackups, "运行日志轮转保留文件数")
+	flags.StringVar(&windowsServiceName, "service-name", windowsServiceName, "Windows 服务名称，例如 AllNotify")
 	if err := flags.Parse(args); err != nil {
 		return server.Config{}, err
 	}

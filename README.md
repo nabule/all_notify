@@ -38,12 +38,34 @@ go build -trimpath -ldflags="-s -w" -o dist/all-notify-windows-amd64.exe ./cmd/a
 .\dist\all-notify-windows-amd64.exe -addr=:8080 -data-dir=.\data -send-timeout=10s -log-max-bytes=10485760 -log-max-backups=5
 ```
 
+Windows 服务安装：
+
+```powershell
+$script = (Resolve-Path .\scripts\install-windows-service.ps1).Path
+Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`" -Restart"
+```
+
+脚本默认服务名为 `AllNotify`，默认查找 `dist\all-notify-windows-amd64.exe`，默认数据目录为 `C:\ProgramData\AllNotify\data`。脚本会把 `-service-name` 写入服务启动参数，服务名自定义后也可正常响应 Windows Service Control Manager。卸载服务：
+
+```powershell
+$script = (Resolve-Path .\scripts\install-windows-service.ps1).Path
+Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`" -Uninstall"
+```
+
 Docker 运行：
 
 ```bash
 docker build -t all-notify:local .
 docker run --rm -p 8080:8080 -v "$PWD/data:/data" all-notify:local -addr=:8080 -data-dir=/data -send-timeout=10s
 ```
+
+发布打包：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version dev
+```
+
+发布包会包含 `bin/`、`docs/`、`scripts/` 和 `skill/all-notify-usage/`。其中 skill 可用于 Codex 的 All Notify 使用、部署、配置和排障指导。
 
 ## HTTP 发送
 

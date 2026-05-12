@@ -1,0 +1,4 @@
+interface:
+  display_name: "All Notify Usage"
+  short_description: "Guide All Notify setup and sending"
+  default_prompt: "Use $all-notify-usage to configure targets, routes, Windows service deployment, test buttons, and notification sending."

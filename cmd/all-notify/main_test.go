@@ -11,6 +11,7 @@ func TestParseConfigUsesEnvironmentDefaults(t *testing.T) {
 	t.Setenv("ALL_NOTIFY_SEND_TIMEOUT", "15s")
 	t.Setenv("ALL_NOTIFY_LOG_MAX_BYTES", "2048")
 	t.Setenv("ALL_NOTIFY_LOG_MAX_BACKUPS", "9")
+	t.Setenv("ALL_NOTIFY_SERVICE_NAME", "EnvAllNotify")
 
 	cfg, err := parseConfig(nil)
 	if err != nil {
@@ -31,6 +32,9 @@ func TestParseConfigUsesEnvironmentDefaults(t *testing.T) {
 	if cfg.LogMaxBackups != 9 {
 		t.Fatalf("LogMaxBackups=%d", cfg.LogMaxBackups)
 	}
+	if windowsServiceName != "EnvAllNotify" {
+		t.Fatalf("windowsServiceName=%q", windowsServiceName)
+	}
 }
 
 func TestParseConfigFlagsOverrideEnvironment(t *testing.T) {
@@ -39,6 +43,7 @@ func TestParseConfigFlagsOverrideEnvironment(t *testing.T) {
 	t.Setenv("ALL_NOTIFY_SEND_TIMEOUT", "15s")
 	t.Setenv("ALL_NOTIFY_LOG_MAX_BYTES", "2048")
 	t.Setenv("ALL_NOTIFY_LOG_MAX_BACKUPS", "9")
+	t.Setenv("ALL_NOTIFY_SERVICE_NAME", "EnvAllNotify")
 
 	cfg, err := parseConfig([]string{
 		"-addr", ":18080",
@@ -46,6 +51,7 @@ func TestParseConfigFlagsOverrideEnvironment(t *testing.T) {
 		"-send-timeout", "3s",
 		"-log-max-bytes", "4096",
 		"-log-max-backups", "2",
+		"-service-name", "FlagAllNotify",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,5 +70,8 @@ func TestParseConfigFlagsOverrideEnvironment(t *testing.T) {
 	}
 	if cfg.LogMaxBackups != 2 {
 		t.Fatalf("LogMaxBackups=%d", cfg.LogMaxBackups)
+	}
+	if windowsServiceName != "FlagAllNotify" {
+		t.Fatalf("windowsServiceName=%q", windowsServiceName)
 	}
 }
