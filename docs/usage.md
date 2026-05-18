@@ -154,7 +154,7 @@ docker run --rm -p 8080:8080 -v "${PWD}\data:/data" all-notify:local -addr=:8080
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version dev
 ```
 
-打包脚本默认编译 Linux x64 和 Windows x64 单文件，并把以下内容放入发布包：
+打包脚本默认编译 Linux、Windows、macOS 的 amd64 和 arm64 单文件，并把以下内容放入发布包：
 
 - `bin/`：执行文件和 SHA256 校验文件。
 - `docs/`：架构、设计、测试和使用说明。
@@ -162,6 +162,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps
 - `skill/all-notify-usage/`：Codex skill，可用于使用、部署、配置和排障指导。
 
 生成的 `skill/all-notify-usage/references/usage.md` 会同步当前 `docs/usage.md`，因此 skill 离开源码仓库后也能提供完整使用说明。
+
+`dist/` 和 `release/` 是本地生成产物，已被 `.gitignore` 忽略，不应提交到源码仓库。发布 GitHub 版本时，把 `release/<version>/` 下的 zip、tar.gz 和 `sha256sums.txt` 上传到 GitHub Releases。
 
 ## 3. 启动参数
 

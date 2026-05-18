@@ -60,7 +60,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows-se
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version dev
 Select-String -Path .\release\dev\all-notify-dev\MANIFEST.txt -Pattern "skill/all-notify-usage/SKILL.md"
+Test-Path .\release\dev\all-notify-dev.zip
+Test-Path .\release\dev\all-notify-dev.tar.gz
 ```
+
+`dist/` 和 `release/` 是本地生成产物，不提交到源码仓库。发布到 GitHub 时只上传 `release/<version>/` 下的 zip、tar.gz 和 `sha256sums.txt` 到 GitHub Releases。
 
 如需 macOS 构建：
 

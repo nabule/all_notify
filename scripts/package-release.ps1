@@ -62,6 +62,108 @@ function Build-Binary([string]$Goos, [string]$Goarch, [string]$OutputPath) {
     $env:GOOS = $Goos
     $env:GOARCH = $Goarch
     & $script:GoCommand build -trimpath -ldflags="-s -w" -o $OutputPath ./cmd/all-notify
+    if (-not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) {
+        throw "构建 $Goos/$Goarch 未生成文件: $OutputPath"
+    }
+}
+
+function New-TarGzArchive([string]$SourceDir, [string]$ArchiveRoot, [string]$OutputPath) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $tempTar = [IO.Path]::ChangeExtension($OutputPath, ".tar")
+    if (Test-Path -LiteralPath $tempTar) {
+        Remove-Item -LiteralPath $tempTar -Force
+    }
+    $tarStream = [IO.File]::Create($tempTar)
+    try {
+        $files = Get-ChildItem -LiteralPath $SourceDir -Recurse -File | Sort-Object FullName
+        foreach ($file in $files) {
+            $relative = Get-RelativePath $SourceDir $file.FullName
+            $entryName = ($ArchiveRoot.TrimEnd("/", "\") + "/" + $relative).Replace("\", "/")
+            Write-TarEntry $tarStream $file.FullName $entryName
+        }
+        Write-TarPadding $tarStream 1024
+    } finally {
+        $tarStream.Dispose()
+    }
+
+    $inputStream = [IO.File]::OpenRead($tempTar)
+    $outputStream = [IO.File]::Create($OutputPath)
+    try {
+        $gzipStream = New-Object IO.Compression.GzipStream($outputStream, [IO.Compression.CompressionMode]::Compress)
+        try {
+            $inputStream.CopyTo($gzipStream)
+        } finally {
+            $gzipStream.Dispose()
+        }
+    } finally {
+        $inputStream.Dispose()
+        $outputStream.Dispose()
+        Remove-Item -LiteralPath $tempTar -Force -ErrorAction SilentlyContinue
+    }
+
+    if (-not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) {
+        throw "tar.gz 归档生成失败: $OutputPath"
+    }
+}
+
+function Write-TarEntry([IO.Stream]$Stream, [string]$FilePath, [string]$EntryName) {
+    $info = Get-Item -LiteralPath $FilePath
+    $header = New-Object byte[] 512
+    Write-TarString $header 0 100 $EntryName
+    Write-TarOctal $header 100 8 420
+    Write-TarOctal $header 108 8 0
+    Write-TarOctal $header 116 8 0
+    Write-TarOctal $header 124 12 $info.Length
+    $mtime = [int64](($info.LastWriteTimeUtc) - [DateTime]"1970-01-01T00:00:00Z").TotalSeconds
+    Write-TarOctal $header 136 12 $mtime
+    for ($i = 148; $i -lt 156; $i++) {
+        $header[$i] = 32
+    }
+    $header[156] = [byte][char]"0"
+    Write-TarString $header 257 6 "ustar"
+    Write-TarString $header 263 2 "00"
+    $checksum = 0
+    foreach ($b in $header) {
+        $checksum += $b
+    }
+    Write-TarOctal $header 148 8 $checksum
+    $Stream.Write($header, 0, $header.Length)
+
+    $input = [IO.File]::OpenRead($FilePath)
+    try {
+        $input.CopyTo($Stream)
+    } finally {
+        $input.Dispose()
+    }
+    $remainder = $info.Length % 512
+    if ($remainder -ne 0) {
+        Write-TarPadding $Stream (512 - $remainder)
+    }
+}
+
+function Write-TarString([byte[]]$Header, [int]$Offset, [int]$Length, [string]$Value) {
+    $bytes = [Text.Encoding]::ASCII.GetBytes($Value)
+    $count = [Math]::Min($bytes.Length, $Length)
+    [Array]::Copy($bytes, 0, $Header, $Offset, $count)
+}
+
+function Write-TarOctal([byte[]]$Header, [int]$Offset, [int]$Length, [int64]$Value) {
+    $text = [Convert]::ToString($Value, 8).PadLeft($Length - 1, "0")
+    $bytes = [Text.Encoding]::ASCII.GetBytes($text)
+    [Array]::Copy($bytes, 0, $Header, $Offset, [Math]::Min($bytes.Length, $Length - 1))
+    $Header[$Offset + $Length - 1] = 0
+}
+
+function Write-TarPadding([IO.Stream]$Stream, [int64]$Length) {
+    if ($Length -le 0) {
+        return
+    }
+    $zeros = New-Object byte[] 512
+    while ($Length -gt 0) {
+        $count = [int][Math]::Min($zeros.Length, $Length)
+        $Stream.Write($zeros, 0, $count)
+        $Length -= $count
+    }
 }
 
 function Get-BinaryName([string]$Goos, [string]$Goarch) {
@@ -85,7 +187,6 @@ $releaseDir = Join-Path $outputRootFull $Version | Join-Path -ChildPath $release
 $binDir = Join-Path $releaseDir "bin"
 $distDir = Join-Path $repoRoot "dist"
 $script:GoCommand = Resolve-CommandPath "go" @("C:\Program Files\Go\bin\go.exe")
-$tarCommand = Resolve-CommandPath "tar" @((Join-Path $env:SystemRoot "System32\tar.exe"))
 
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path $distDir | Out-Null
@@ -179,10 +280,7 @@ if (Test-Path -LiteralPath $tarPath) {
     Remove-Item -LiteralPath $tarPath -Force
 }
 Compress-Archive -Path $releaseDir -DestinationPath $zipPath -Force
-& $tarCommand -czf $tarPath -C $archiveRoot $releaseName
-if (-not (Test-Path -LiteralPath $tarPath -PathType Leaf)) {
-    throw "tar.gz 归档生成失败: $tarPath"
-}
+New-TarGzArchive $releaseDir $releaseName $tarPath
 if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
     throw "zip 归档生成失败: $zipPath"
 }

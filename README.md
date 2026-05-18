@@ -183,6 +183,16 @@ SMTP：
 }
 ```
 
+## 发布
+
+源码仓库会忽略 `dist/` 和 `release/` 本地生成产物。发布版本时运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version v1.2.0
+```
+
+然后把 `release/v1.2.0/` 下的 zip、tar.gz 和 `sha256sums.txt` 上传到 GitHub Releases。
+
 `mode` 可选 `append` 或 `new`：`append` 会追加公告，`new` 会覆盖当前频道并写入一条新公告。未配置时默认 `append`。
 
 ## 启动参数
