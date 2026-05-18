@@ -61,10 +61,15 @@ function Build-Binary([string]$Goos, [string]$Goarch, [string]$OutputPath) {
     $env:CGO_ENABLED = "0"
     $env:GOOS = $Goos
     $env:GOARCH = $Goarch
-    & $script:GoCommand build -trimpath -ldflags="-s -w" -o $OutputPath ./cmd/all-notify
+    $args = "build -trimpath -ldflags `"-s -w`" -o `"$OutputPath`" ./cmd/all-notify"
+    $process = Start-Process -FilePath $script:GoCommand -ArgumentList $args -NoNewWindow -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        throw "构建 $Goos/$Goarch 失败，退出码: $($process.ExitCode)"
+    }
     if (-not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) {
         throw "构建 $Goos/$Goarch 未生成文件: $OutputPath"
     }
+    Test-BinaryFormat $OutputPath $Goos
 }
 
 function New-TarGzArchive([string]$SourceDir, [string]$ArchiveRoot, [string]$OutputPath) {
@@ -163,6 +168,37 @@ function Write-TarPadding([IO.Stream]$Stream, [int64]$Length) {
         $count = [int][Math]::Min($zeros.Length, $Length)
         $Stream.Write($zeros, 0, $count)
         $Length -= $count
+    }
+}
+
+function Test-BinaryFormat([string]$Path, [string]$Goos) {
+    $stream = [IO.File]::OpenRead($Path)
+    try {
+        $header = New-Object byte[] 4
+        $read = $stream.Read($header, 0, $header.Length)
+    } finally {
+        $stream.Dispose()
+    }
+    if ($read -lt 4) {
+        throw "构建产物过小: $Path"
+    }
+    $hex = ($header | ForEach-Object { $_.ToString("x2") }) -join ""
+    switch ($Goos) {
+        "linux" {
+            if ($hex -ne "7f454c46") {
+                throw "构建产物格式错误，期望 Linux ELF: $Path"
+            }
+        }
+        "windows" {
+            if ($hex.Substring(0, 4) -ne "4d5a") {
+                throw "构建产物格式错误，期望 Windows PE: $Path"
+            }
+        }
+        "darwin" {
+            if (@("feedfacf", "cffaedfe") -notcontains $hex) {
+                throw "构建产物格式错误，期望 macOS Mach-O: $Path"
+            }
+        }
     }
 }
 
