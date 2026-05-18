@@ -287,17 +287,30 @@ $releaseMd = @(
     "- ``bin/``：单文件执行程序。"
     "- ``bin/sha256sums.txt``：执行文件 SHA256 校验值。"
     "- ``docs/``：架构、设计、测试和完整使用说明。"
-    "- ``scripts/``：Windows 服务安装和发布打包脚本。"
+    "- ``scripts/``：Windows/Linux 后台启动、停止、服务添加、服务删除和发布打包脚本。"
     "- ``skill/all-notify-usage/``：Codex skill，可用于 All Notify 使用、配置、部署和排障指导。"
     "- ``README.md``：快速启动和 API 摘要。"
     "- ``docker-compose.yml``、``Dockerfile``：容器部署示例。"
     "- ``MANIFEST.txt``：release 文件清单。"
     ""
-    "## Windows 服务"
+    "## Windows 后台和服务"
     ""
     '```powershell'
-    '$script = (Resolve-Path .\scripts\install-windows-service.ps1).Path'
+    '.\scripts\start-windows-background.ps1 -ExePath .\bin\all-notify-windows-amd64.exe'
+    '.\scripts\stop-windows-background.ps1'
+    '$script = (Resolve-Path .\scripts\add-windows-service.ps1).Path'
     'Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`" -ExePath .\bin\all-notify-windows-amd64.exe -Restart"'
+    '$script = (Resolve-Path .\scripts\remove-windows-service.ps1).Path'
+    'Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`""'
+    '```'
+    ""
+    "## Linux 后台和 systemd"
+    ""
+    '```bash'
+    './scripts/start-linux-background.sh --exe ./bin/all-notify-linux-amd64'
+    './scripts/stop-linux-background.sh'
+    'sudo ./scripts/add-linux-service.sh --exe /opt/all-notify/all-notify-linux-amd64 --restart'
+    'sudo ./scripts/remove-linux-service.sh'
     '```'
     ""
     "## Skill"

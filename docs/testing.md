@@ -22,7 +22,8 @@ docker run --rm -v "$PWD":/src -w /src golang:1.23-alpine sh -lc "go test ./..."
 - HTTP 服务配置 API、发送 API 和发送日志落库。
 - 发送失败有限重试、重试耗尽、运行中修改重试配置立即生效、无限后台重试停止。
 - SQLite 发送日志裁剪。
-- Windows 服务安装脚本和 Windows Service 入口需要通过 Windows x64 编译验证。
+- Windows/Linux 后台和服务管理脚本需要通过语法或 dry run 验证。
+- Windows Service 入口需要通过 Windows x64 编译验证。
 
 ## Docker 构建测试
 
@@ -43,16 +44,32 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dis
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/all-notify-windows-amd64.exe ./cmd/all-notify
 ```
 
-Windows 服务脚本语法检查：
+Windows 脚本语法检查：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -Command "[scriptblock]::Create((Get-Content .\scripts\install-windows-service.ps1 -Raw)) | Out-Null"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[scriptblock]::Create((Get-Content .\scripts\add-windows-service.ps1 -Raw)) | Out-Null"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[scriptblock]::Create((Get-Content .\scripts\remove-windows-service.ps1 -Raw)) | Out-Null"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[scriptblock]::Create((Get-Content .\scripts\start-windows-background.ps1 -Raw)) | Out-Null"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[scriptblock]::Create((Get-Content .\scripts\stop-windows-background.ps1 -Raw)) | Out-Null"
 ```
 
 Windows 服务脚本非管理员 dry run 验证：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows-service.ps1 -DryRun -ExePath .\dist\all-notify-windows-amd64.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\add-windows-service.ps1 -DryRun -ExePath .\dist\all-notify-windows-amd64.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\remove-windows-service.ps1 -DryRun
+```
+
+Linux 脚本语法和 dry run 验证：
+
+```bash
+bash -n scripts/start-linux-background.sh
+bash -n scripts/stop-linux-background.sh
+bash -n scripts/add-linux-service.sh
+bash -n scripts/remove-linux-service.sh
+bash scripts/add-linux-service.sh --dry-run --exe /opt/all-notify/all-notify-linux-amd64
+bash scripts/remove-linux-service.sh --dry-run
 ```
 
 发布打包验证：

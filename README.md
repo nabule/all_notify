@@ -38,18 +38,33 @@ go build -trimpath -ldflags="-s -w" -o dist/all-notify-windows-amd64.exe ./cmd/a
 .\dist\all-notify-windows-amd64.exe -addr=:8080 -data-dir=.\data -send-timeout=10s -log-max-bytes=10485760 -log-max-backups=5
 ```
 
-Windows 服务安装：
+Windows 后台启动/停止：
 
 ```powershell
-$script = (Resolve-Path .\scripts\install-windows-service.ps1).Path
-Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`" -Restart"
+.\scripts\start-windows-background.ps1 -ExePath .\dist\all-notify-windows-amd64.exe
+.\scripts\stop-windows-background.ps1
 ```
 
-脚本默认服务名为 `AllNotify`，默认查找 `dist\all-notify-windows-amd64.exe`，默认数据目录为 `C:\ProgramData\AllNotify\data`。脚本会把 `-service-name` 写入服务启动参数，服务名自定义后也可正常响应 Windows Service Control Manager。卸载服务：
+Windows 服务添加/删除：
 
 ```powershell
-$script = (Resolve-Path .\scripts\install-windows-service.ps1).Path
-Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`" -Uninstall"
+$script = (Resolve-Path .\scripts\add-windows-service.ps1).Path
+Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`" -Restart"
+
+$script = (Resolve-Path .\scripts\remove-windows-service.ps1).Path
+Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`""
+```
+
+脚本默认服务名为 `AllNotify`，默认查找 `dist\all-notify-windows-amd64.exe`，默认数据目录为 `C:\ProgramData\AllNotify\data`。
+
+Linux 后台启动/停止和 systemd 服务：
+
+```bash
+./scripts/start-linux-background.sh --exe ./dist/all-notify-linux-amd64
+./scripts/stop-linux-background.sh
+
+sudo ./scripts/add-linux-service.sh --exe /opt/all-notify/all-notify-linux-amd64 --restart
+sudo ./scripts/remove-linux-service.sh
 ```
 
 Docker 运行：
@@ -65,7 +80,7 @@ docker run --rm -p 8080:8080 -v "$PWD/data:/data" all-notify:local -addr=:8080 -
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version dev
 ```
 
-发布包会包含 `bin/`、`docs/`、`scripts/` 和 `skill/all-notify-usage/`。其中 skill 可用于 Codex 的 All Notify 使用、部署、配置和排障指导。
+发布包会包含 `bin/`、`docs/`、`scripts/` 和 `skill/all-notify-usage/`。`scripts/` 内含 Windows/Linux 后台启动、停止、服务添加和服务删除脚本；skill 可用于 Codex 的 All Notify 使用、部署、配置和排障指导。
 
 ## HTTP 发送
 

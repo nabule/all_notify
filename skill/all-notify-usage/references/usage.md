@@ -72,6 +72,45 @@ chmod +x dist/all-notify-linux-amd64
 ./dist/all-notify-linux-amd64 -addr=:8080 -data-dir=./data -send-timeout=10s -log-max-bytes=10485760 -log-max-backups=5
 ```
 
+后台启动：
+
+```bash
+./scripts/start-linux-background.sh --exe ./dist/all-notify-linux-amd64 --addr :8080 --data-dir ./data
+```
+
+停止后台进程：
+
+```bash
+./scripts/stop-linux-background.sh
+```
+
+后台脚本默认写入 `data/all-notify.pid`，标准输出和错误日志分别写入 `data/logs/stdout.log`、`data/logs/stderr.log`。服务自身运行日志仍写入 `data/logs/app.log`。
+
+添加为 systemd 服务：
+
+```bash
+sudo mkdir -p /opt/all-notify
+sudo install -m 0755 dist/all-notify-linux-amd64 /opt/all-notify/all-notify-linux-amd64
+sudo ./scripts/add-linux-service.sh --exe /opt/all-notify/all-notify-linux-amd64 --restart
+```
+
+脚本默认服务名为 `all-notify`，默认运行用户为 `all-notify`，默认数据目录为 `/var/lib/all-notify`，默认监听 `:8080`。如需自定义参数：
+
+```bash
+sudo ./scripts/add-linux-service.sh \
+  --service-name all-notify \
+  --exe /opt/all-notify/all-notify-linux-amd64 \
+  --data-dir /srv/all-notify/data \
+  --addr :18888 \
+  --restart
+```
+
+删除 systemd 服务：
+
+```bash
+sudo ./scripts/remove-linux-service.sh --service-name all-notify
+```
+
 ### 2.4 Windows x64 单文件
 
 在 Windows PowerShell 中编译：
@@ -90,26 +129,40 @@ go build -trimpath -ldflags="-s -w" -o dist/all-notify-windows-amd64.exe ./cmd/a
 .\dist\all-notify-windows-amd64.exe -addr=:8080 -data-dir=.\data -send-timeout=10s -log-max-bytes=10485760 -log-max-backups=5
 ```
 
-安装为 Windows 服务：
+后台启动：
 
 ```powershell
-$script = (Resolve-Path .\scripts\install-windows-service.ps1).Path
+.\scripts\start-windows-background.ps1 -ExePath .\dist\all-notify-windows-amd64.exe -Addr :8080 -DataDir .\data
+```
+
+停止后台进程：
+
+```powershell
+.\scripts\stop-windows-background.ps1
+```
+
+后台脚本默认写入 `data\all-notify.pid`，标准输出和错误日志分别写入 `data\logs\stdout.log`、`data\logs\stderr.log`。服务自身运行日志仍写入 `data\logs\app.log`。
+
+添加为 Windows 服务：
+
+```powershell
+$script = (Resolve-Path .\scripts\add-windows-service.ps1).Path
 Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`" -Restart"
 ```
 
 脚本默认服务名为 `AllNotify`，默认查找 `dist\all-notify-windows-amd64.exe`，默认数据目录为 `C:\ProgramData\AllNotify\data`，默认监听 `:8080`。脚本会把 `-service-name` 写入服务启动参数，服务名自定义后也可正常响应 Windows Service Control Manager。如需自定义参数：
 
 ```powershell
-$script = (Resolve-Path .\scripts\install-windows-service.ps1).Path
+$script = (Resolve-Path .\scripts\add-windows-service.ps1).Path
 $exe = (Resolve-Path .\dist\all-notify-windows-amd64.exe).Path
 Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`" -ExePath `"$exe`" -ServiceName AllNotify -Addr :18888 -DataDir C:\all-notify\data -Restart"
 ```
 
-卸载服务：
+删除 Windows 服务：
 
 ```powershell
-$script = (Resolve-Path .\scripts\install-windows-service.ps1).Path
-Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`" -Uninstall"
+$script = (Resolve-Path .\scripts\remove-windows-service.ps1).Path
+Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$script`""
 ```
 
 ### 2.5 macOS 单文件
@@ -158,7 +211,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps
 
 - `bin/`：执行文件和 SHA256 校验文件。
 - `docs/`：架构、设计、测试和使用说明。
-- `scripts/`：Windows 服务安装脚本和发布打包脚本。
+- `scripts/`：Windows/Linux 后台启动、停止、服务添加、服务删除和发布打包脚本。
 - `skill/all-notify-usage/`：Codex skill，可用于使用、部署、配置和排障指导。
 
 生成的 `skill/all-notify-usage/references/usage.md` 会同步当前 `docs/usage.md`，因此 skill 离开源码仓库后也能提供完整使用说明。
