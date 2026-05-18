@@ -23,6 +23,13 @@ import (
 	"all_notify/internal/store"
 )
 
+const (
+	maxNotificationBodyBytes       = 1024 * 1024
+	maxMultipartMemoryBytes        = 8 * 1024 * 1024
+	maxMultipartRequestBytes int64 = 25 * 1024 * 1024
+	maxAttachmentBytes             = 10 * 1024 * 1024
+)
+
 type Config struct {
 	Addr          string
 	DataDir       string
@@ -634,12 +641,21 @@ func parseNotificationRequest(r *http.Request, defaultTitle string) (model.Notif
 		return n, query.Encode(), nil
 	}
 
-	body, err := readLimitedBody(r.Body, 1024*1024)
+	contentType := strings.ToLower(strings.Split(r.Header.Get("Content-Type"), ";")[0])
+	if contentType == "multipart/form-data" {
+		raw, err := parseMultipartNotificationRequest(r, &n)
+		if err != nil {
+			return n, raw, err
+		}
+		applyValues(&n, query)
+		return n, raw, nil
+	}
+
+	body, err := readLimitedBody(r.Body, maxNotificationBodyBytes)
 	if err != nil {
 		return n, "", errors.New("请求体过大或读取失败")
 	}
 	raw := string(body)
-	contentType := strings.ToLower(strings.Split(r.Header.Get("Content-Type"), ";")[0])
 	switch contentType {
 	case "application/json":
 		values, err := parseJSONValues(body)
@@ -667,6 +683,95 @@ func parseNotificationRequest(r *http.Request, defaultTitle string) (model.Notif
 	}
 	applyValues(&n, query)
 	return n, raw, nil
+}
+
+func parseMultipartNotificationRequest(r *http.Request, n *model.Notification) (string, error) {
+	r.Body = http.MaxBytesReader(nil, r.Body, maxMultipartRequestBytes)
+	if err := r.ParseMultipartForm(maxMultipartMemoryBytes); err != nil {
+		return "", errors.New("multipart 表单内容无效或超过 25MB")
+	}
+	defer func() {
+		if r.MultipartForm != nil {
+			_ = r.MultipartForm.RemoveAll()
+		}
+	}()
+	values := url.Values{}
+	if r.MultipartForm != nil {
+		for key, value := range r.MultipartForm.Value {
+			values[key] = value
+		}
+	}
+	applyValues(n, values)
+
+	attachments, err := readMultipartAttachments(r)
+	if err != nil {
+		return "", err
+	}
+	n.Attachments = attachments
+	return multipartSummary(values, attachments), nil
+}
+
+func readMultipartAttachments(r *http.Request) ([]model.Attachment, error) {
+	if r.MultipartForm == nil || r.MultipartForm.File == nil {
+		return nil, nil
+	}
+	var attachments []model.Attachment
+	for field, headers := range r.MultipartForm.File {
+		if field != "attachment" && field != "attachments" {
+			continue
+		}
+		for _, header := range headers {
+			if header.Size > maxAttachmentBytes {
+				return nil, fmt.Errorf("附件 %s 超过 10MB", header.Filename)
+			}
+			file, err := header.Open()
+			if err != nil {
+				return nil, fmt.Errorf("读取附件 %s 失败", header.Filename)
+			}
+			data, err := readLimitedBody(file, maxAttachmentBytes)
+			_ = file.Close()
+			if err != nil {
+				return nil, fmt.Errorf("附件 %s 超过 10MB 或读取失败", header.Filename)
+			}
+			contentType := header.Header.Get("Content-Type")
+			if strings.TrimSpace(contentType) == "" {
+				contentType = http.DetectContentType(data)
+			}
+			attachments = append(attachments, model.Attachment{
+				Filename:    strings.TrimSpace(header.Filename),
+				ContentType: contentType,
+				Data:        data,
+			})
+		}
+	}
+	return attachments, nil
+}
+
+func multipartSummary(values url.Values, attachments []model.Attachment) string {
+	summary := make(map[string]any)
+	for key, value := range values {
+		if len(value) == 1 {
+			summary[key] = value[0]
+		} else {
+			summary[key] = value
+		}
+	}
+	if len(attachments) > 0 {
+		files := make([]map[string]any, 0, len(attachments))
+		for _, attachment := range attachments {
+			files = append(files, map[string]any{
+				"filename":     attachment.Filename,
+				"content_type": attachment.ContentType,
+				"size":         len(attachment.Data),
+			})
+		}
+		summary["attachments"] = files
+	}
+	data, err := json.Marshal(summary)
+	if err != nil {
+		return "multipart/form-data"
+	}
+	return string(data)
 }
 
 func parseOptionalNotificationRequest(r *http.Request, defaultTitle string) (model.Notification, string, error) {

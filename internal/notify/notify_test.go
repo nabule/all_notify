@@ -180,6 +180,55 @@ func TestSMTPSendWithFakeServer(t *testing.T) {
 	}
 }
 
+func TestSMTPSendWithAttachments(t *testing.T) {
+	smtpServer, messages := startFakeSMTP(t)
+	defer smtpServer.Close()
+	host, portText, err := net.SplitHostPort(smtpServer.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portText)
+	config, _ := json.Marshal(SMTPConfig{
+		Host:     host,
+		Port:     port,
+		Security: "none",
+		From:     "sender@example.com",
+		To:       []string{"receiver@example.com", "ops@example.com"},
+		CC:       []string{"manager@example.com"},
+		BCC:      []string{"audit@example.com"},
+	})
+	response, err := sendSMTP(context.Background(), model.Notification{
+		Title:   "Report",
+		Message: "Body",
+		Attachments: []model.Attachment{
+			{Filename: "report.txt", ContentType: "text/plain", Data: []byte("attachment body")},
+		},
+	}, string(config), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response != "smtp sent" {
+		t.Fatalf("unexpected response: %s", response)
+	}
+	message := <-messages
+	for _, want := range []string{
+		"Content-Type: multipart/mixed;",
+		"Content-Disposition: attachment;",
+		"filename=report.txt",
+		base64.StdEncoding.EncodeToString([]byte("Body")),
+		base64.StdEncoding.EncodeToString([]byte("attachment body")),
+		"To: receiver@example.com, ops@example.com",
+		"Cc: manager@example.com",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("missing %q in message: %s", want, message)
+		}
+	}
+	if strings.Contains(message, "audit@example.com") {
+		t.Fatalf("bcc leaked in message headers: %s", message)
+	}
+}
+
 type fakeSMTP struct {
 	listener net.Listener
 }

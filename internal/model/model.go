@@ -35,11 +35,18 @@ type Target struct {
 }
 
 type Notification struct {
-	Title    string   `json:"title"`
-	Message  string   `json:"message"`
-	URL      string   `json:"url,omitempty"`
-	Priority string   `json:"priority,omitempty"`
-	Tags     []string `json:"tags,omitempty"`
+	Title       string       `json:"title"`
+	Message     string       `json:"message"`
+	URL         string       `json:"url,omitempty"`
+	Priority    string       `json:"priority,omitempty"`
+	Tags        []string     `json:"tags,omitempty"`
+	Attachments []Attachment `json:"-"`
+}
+
+type Attachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
 }
 
 type SendLog struct {

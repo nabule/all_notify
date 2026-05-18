@@ -98,6 +98,18 @@ curl -X POST "http://localhost:8080/send/server-alert?title=CPU" \
   --data "CPU usage high"
 ```
 
+POST multipart 附件：
+
+```bash
+curl -X POST "http://localhost:8080/send/server-alert" \
+  -F "title=日报" \
+  -F "message=见附件" \
+  -F "attachments=@./report.pdf" \
+  -F "attachments=@./metrics.csv"
+```
+
+附件只对 SMTP 发送目标生效，Bark、ntfy 和公告板会忽略附件。单个附件最大 10MB，单次请求最大 25MB。
+
 标准字段：
 
 - `title`：通知标题。
@@ -105,6 +117,7 @@ curl -X POST "http://localhost:8080/send/server-alert?title=CPU" \
 - `url`、`click`：点击通知后打开的 URL。
 - `priority`、`level`：通知优先级。
 - `tags`、`tag`：逗号分隔标签，JSON 也支持数组。
+- `attachment`、`attachments`：`multipart/form-data` 附件字段，可重复上传多个文件。
 
 全部目标发送成功返回 `200`；同步重试后仍有任一目标失败返回 `502`；入口不存在或禁用返回 `404`。
 
@@ -165,7 +178,9 @@ SMTP：
   "username": "user@example.com",
   "password": "password",
   "from": "user@example.com",
-  "to": ["receiver@example.com"],
+  "to": ["receiver@example.com", "ops@example.com"],
+  "cc": ["manager@example.com"],
+  "bcc": [],
   "subject_prefix": "[All Notify]"
 }
 ```

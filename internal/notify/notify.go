@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -458,10 +459,52 @@ func buildMailMessage(cfg SMTPConfig, notification model.Notification) []byte {
 	}
 	header.Set("Subject", mime.QEncoding.Encode("utf-8", subject))
 	header.Set("MIME-Version", "1.0")
-	header.Set("Content-Type", `text/plain; charset="utf-8"`)
-	header.Set("Content-Transfer-Encoding", "base64")
+	if len(notification.Attachments) == 0 {
+		header.Set("Content-Type", `text/plain; charset="utf-8"`)
+		header.Set("Content-Transfer-Encoding", "base64")
+
+		var buf bytes.Buffer
+		writeMIMEHeader(&buf, header)
+		writeBase64Lines(&buf, []byte(mailBody(notification)))
+		return buf.Bytes()
+	}
 
 	var buf bytes.Buffer
+	mixed := multipart.NewWriter(&buf)
+	header.Set("Content-Type", `multipart/mixed; boundary="`+mixed.Boundary()+`"`)
+	writeMIMEHeader(&buf, header)
+
+	textHeader := make(textproto.MIMEHeader)
+	textHeader.Set("Content-Type", `text/plain; charset="utf-8"`)
+	textHeader.Set("Content-Transfer-Encoding", "base64")
+	textPart, _ := mixed.CreatePart(textHeader)
+	var text bytes.Buffer
+	writeBase64Lines(&text, []byte(mailBody(notification)))
+	_, _ = textPart.Write(text.Bytes())
+
+	for _, attachment := range notification.Attachments {
+		partHeader := make(textproto.MIMEHeader)
+		contentType := strings.TrimSpace(attachment.ContentType)
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		filename := strings.TrimSpace(attachment.Filename)
+		if filename == "" {
+			filename = "attachment"
+		}
+		partHeader.Set("Content-Type", mime.FormatMediaType(contentType, map[string]string{"name": filename}))
+		partHeader.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+		partHeader.Set("Content-Transfer-Encoding", "base64")
+		part, _ := mixed.CreatePart(partHeader)
+		var encoded bytes.Buffer
+		writeBase64Lines(&encoded, attachment.Data)
+		_, _ = part.Write(encoded.Bytes())
+	}
+	_ = mixed.Close()
+	return buf.Bytes()
+}
+
+func writeMIMEHeader(buf *bytes.Buffer, header textproto.MIMEHeader) {
 	for key, values := range header {
 		for _, value := range values {
 			buf.WriteString(key)
@@ -471,11 +514,18 @@ func buildMailMessage(cfg SMTPConfig, notification model.Notification) []byte {
 		}
 	}
 	buf.WriteString("\r\n")
+}
+
+func mailBody(notification model.Notification) string {
 	body := notification.Message
 	if notification.URL != "" {
 		body += "\n\n" + notification.URL
 	}
-	encoded := base64.StdEncoding.EncodeToString([]byte(body))
+	return body
+}
+
+func writeBase64Lines(buf *bytes.Buffer, data []byte) {
+	encoded := base64.StdEncoding.EncodeToString(data)
 	for len(encoded) > 76 {
 		buf.WriteString(encoded[:76])
 		buf.WriteString("\r\n")
@@ -483,7 +533,6 @@ func buildMailMessage(cfg SMTPConfig, notification model.Notification) []byte {
 	}
 	buf.WriteString(encoded)
 	buf.WriteString("\r\n")
-	return buf.Bytes()
 }
 
 func decodeConfig[T any](raw string, target *T) error {

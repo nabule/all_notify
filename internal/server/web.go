@@ -145,9 +145,17 @@ const indexHTML = `<!doctype html>
               <tr><td><code>url</code> / <code>click</code></td><td>点击通知后打开的 URL。</td></tr>
               <tr><td><code>priority</code> / <code>level</code></td><td>通知优先级。</td></tr>
               <tr><td><code>tags</code> / <code>tag</code></td><td>标签，GET/表单中用逗号分隔，JSON 中可用数组。</td></tr>
+              <tr><td><code>attachment</code> / <code>attachments</code></td><td>仅 <code>multipart/form-data</code> 可用；SMTP 会作为邮件附件发送，其他目标忽略附件。</td></tr>
             </tbody>
           </table>
         </div>
+        <h3>SMTP 附件</h3>
+        <p>发送入口支持上传多个附件。附件只对 SMTP 目标生效；Bark、ntfy 和公告板会忽略附件。单个附件最大 10MB，单次请求最大 25MB。</p>
+        <pre>curl -X POST "/send/server-alert" \
+  -F "title=日报" \
+  -F "message=见附件" \
+  -F "attachments=@./report.pdf" \
+  -F "attachments=@./metrics.csv"</pre>
         <h3>返回状态</h3>
         <p><code>200</code> 表示全部目标发送成功；<code>502</code> 表示至少一个目标失败；<code>404</code> 表示入口不存在或已禁用；<code>400</code> 表示请求参数无效。</p>
         <p>服务不做内置鉴权，请只部署在可信网络，或由外部网关控制访问。</p>
@@ -182,7 +190,9 @@ const examples = {
     username: "user@example.com",
     password: "password",
     from: "user@example.com",
-    to: ["receiver@example.com"],
+    to: ["receiver@example.com", "ops@example.com"],
+    cc: ["manager@example.com"],
+    bcc: [],
     subject_prefix: "[All Notify]"
   },
   board: {
@@ -281,7 +291,12 @@ function routeExamples(route) {
   const jsonBody = '{"title":"CPU","message":"CPU usage high","url":"https://example.com","tags":["warning"]}';
   return {
     curl: 'curl "' + url + '?title=CPU&message=CPU%20usage%20high"\n\n' +
-      'curl -X POST "' + url + '" -H "Content-Type: application/json" -d \'' + jsonBody + '\'',
+      'curl -X POST "' + url + '" -H "Content-Type: application/json" -d \'' + jsonBody + '\'\n\n' +
+      'curl -X POST "' + url + '" \\\n' +
+      '  -F "title=日报" \\\n' +
+      '  -F "message=见附件" \\\n' +
+      '  -F "attachments=@./report.pdf" \\\n' +
+      '  -F "attachments=@./metrics.csv"',
     python: 'import json\nimport urllib.request\n\n' +
       'url = "' + url + '"\n' +
       'payload = {\n' +
@@ -297,7 +312,20 @@ function routeExamples(route) {
       '    method="POST",\n' +
       ')\n' +
       'with urllib.request.urlopen(req, timeout=10) as resp:\n' +
-      '    print(resp.status, resp.read().decode("utf-8"))'
+      '    print(resp.status, resp.read().decode("utf-8"))\n\n' +
+      '# 附件发送可用 requests；附件只对 SMTP 目标生效\n' +
+      'import requests\n\n' +
+      'with open("report.pdf", "rb") as report, open("metrics.csv", "rb") as metrics:\n' +
+      '    resp = requests.post(\n' +
+      '        url,\n' +
+      '        data={"title": "日报", "message": "见附件"},\n' +
+      '        files=[\n' +
+      '            ("attachments", ("report.pdf", report, "application/pdf")),\n' +
+      '            ("attachments", ("metrics.csv", metrics, "text/csv")),\n' +
+      '        ],\n' +
+      '        timeout=30,\n' +
+      '    )\n' +
+      '    print(resp.status_code, resp.text)'
   };
 }
 

@@ -269,8 +269,8 @@ Web 页面选择类型 `smtp`，配置示例：
   "username": "user@example.com",
   "password": "password",
   "from": "user@example.com",
-  "to": ["receiver@example.com"],
-  "cc": [],
+  "to": ["receiver@example.com", "ops@example.com"],
+  "cc": ["manager@example.com"],
   "bcc": [],
   "subject_prefix": "[All Notify]"
 }
@@ -281,6 +281,8 @@ Web 页面选择类型 `smtp`，配置示例：
 - `none`：普通 SMTP。
 - `starttls`：连接后升级 TLS，常用于 587 端口。
 - `tls`：直接 TLS 连接，常用于 465 端口。
+
+`to`、`cc`、`bcc` 都是数组，可同时给多个收件人发送。`bcc` 收件人会参与 SMTP 投递，但不会出现在邮件头中。
 
 ### 公告板
 
@@ -380,6 +382,37 @@ curl -X POST "http://localhost:8080/send/server-alert?title=CPU" \
   --data "CPU usage high"
 ```
 
+### POST multipart 附件
+
+附件字段名可以是 `attachment` 或 `attachments`，同一请求可重复上传多个文件。附件只对 SMTP 目标生效；Bark、ntfy 和公告板会忽略附件。单个附件最大 10MB，单次请求最大 25MB。
+
+```bash
+curl -X POST "http://localhost:8080/send/server-alert" \
+  -F "title=日报" \
+  -F "message=见附件" \
+  -F "attachments=@./report.pdf" \
+  -F "attachments=@./metrics.csv"
+```
+
+```python
+import requests
+
+url = "http://localhost:8080/send/server-alert"
+with open("report.pdf", "rb") as report, open("metrics.csv", "rb") as metrics:
+    resp = requests.post(
+        url,
+        data={"title": "日报", "message": "见附件"},
+        files=[
+            ("attachments", ("report.pdf", report, "application/pdf")),
+            ("attachments", ("metrics.csv", metrics, "text/csv")),
+        ],
+        timeout=30,
+    )
+    print(resp.status_code, resp.text)
+```
+
+发送日志只记录附件文件名、类型和大小，不保存附件内容。
+
 ### 标准字段
 
 | 字段 | 说明 |
@@ -389,6 +422,7 @@ curl -X POST "http://localhost:8080/send/server-alert?title=CPU" \
 | `url` / `click` | 点击通知后打开的 URL |
 | `priority` / `level` | 优先级 |
 | `tags` / `tag` | 标签，GET/表单中用逗号分隔，JSON 中可用数组 |
+| `attachment` / `attachments` | `multipart/form-data` 附件字段，可重复上传多个文件；仅 SMTP 目标使用 |
 
 ### 返回状态
 

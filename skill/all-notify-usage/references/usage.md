@@ -154,7 +154,7 @@ docker run --rm -p 8080:8080 -v "${PWD}\data:/data" all-notify:local -addr=:8080
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version dev
 ```
 
-打包脚本默认编译 Linux x64 和 Windows x64 单文件，并把以下内容放入发布包：
+打包脚本默认编译 Linux、Windows、macOS 的 amd64 和 arm64 单文件，并把以下内容放入发布包：
 
 - `bin/`：执行文件和 SHA256 校验文件。
 - `docs/`：架构、设计、测试和使用说明。
@@ -162,6 +162,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps
 - `skill/all-notify-usage/`：Codex skill，可用于使用、部署、配置和排障指导。
 
 生成的 `skill/all-notify-usage/references/usage.md` 会同步当前 `docs/usage.md`，因此 skill 离开源码仓库后也能提供完整使用说明。
+
+`dist/` 和 `release/` 是本地生成产物，已被 `.gitignore` 忽略，不应提交到源码仓库。发布 GitHub 版本时，把 `release/<version>/` 下的 zip、tar.gz 和 `sha256sums.txt` 上传到 GitHub Releases。
 
 ## 3. 启动参数
 
@@ -267,8 +269,8 @@ Web 页面选择类型 `smtp`，配置示例：
   "username": "user@example.com",
   "password": "password",
   "from": "user@example.com",
-  "to": ["receiver@example.com"],
-  "cc": [],
+  "to": ["receiver@example.com", "ops@example.com"],
+  "cc": ["manager@example.com"],
   "bcc": [],
   "subject_prefix": "[All Notify]"
 }
@@ -279,6 +281,8 @@ Web 页面选择类型 `smtp`，配置示例：
 - `none`：普通 SMTP。
 - `starttls`：连接后升级 TLS，常用于 587 端口。
 - `tls`：直接 TLS 连接，常用于 465 端口。
+
+`to`、`cc`、`bcc` 都是数组，可同时给多个收件人发送。`bcc` 收件人会参与 SMTP 投递，但不会出现在邮件头中。
 
 ### 公告板
 
@@ -378,6 +382,37 @@ curl -X POST "http://localhost:8080/send/server-alert?title=CPU" \
   --data "CPU usage high"
 ```
 
+### POST multipart 附件
+
+附件字段名可以是 `attachment` 或 `attachments`，同一请求可重复上传多个文件。附件只对 SMTP 目标生效；Bark、ntfy 和公告板会忽略附件。单个附件最大 10MB，单次请求最大 25MB。
+
+```bash
+curl -X POST "http://localhost:8080/send/server-alert" \
+  -F "title=日报" \
+  -F "message=见附件" \
+  -F "attachments=@./report.pdf" \
+  -F "attachments=@./metrics.csv"
+```
+
+```python
+import requests
+
+url = "http://localhost:8080/send/server-alert"
+with open("report.pdf", "rb") as report, open("metrics.csv", "rb") as metrics:
+    resp = requests.post(
+        url,
+        data={"title": "日报", "message": "见附件"},
+        files=[
+            ("attachments", ("report.pdf", report, "application/pdf")),
+            ("attachments", ("metrics.csv", metrics, "text/csv")),
+        ],
+        timeout=30,
+    )
+    print(resp.status_code, resp.text)
+```
+
+发送日志只记录附件文件名、类型和大小，不保存附件内容。
+
 ### 标准字段
 
 | 字段 | 说明 |
@@ -387,6 +422,7 @@ curl -X POST "http://localhost:8080/send/server-alert?title=CPU" \
 | `url` / `click` | 点击通知后打开的 URL |
 | `priority` / `level` | 优先级 |
 | `tags` / `tag` | 标签，GET/表单中用逗号分隔，JSON 中可用数组 |
+| `attachment` / `attachments` | `multipart/form-data` 附件字段，可重复上传多个文件；仅 SMTP 目标使用 |
 
 ### 返回状态
 

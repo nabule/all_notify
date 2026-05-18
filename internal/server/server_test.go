@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -87,6 +88,44 @@ func TestParseNotificationRequest(t *testing.T) {
 				t.Fatalf("got tags=%v want=%v", got.Tags, tt.wantTags)
 			}
 		})
+	}
+}
+
+func TestParseNotificationRequestMultipartAttachments(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("title", "Report")
+	_ = writer.WriteField("message", "See files")
+	part, err := writer.CreateFormFile("attachments", "report.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("hello attachment"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/send/test?tags=mail,report", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	got, raw, err := parseNotificationRequest(req, "default")
+	if err != nil {
+		t.Fatalf("parseNotificationRequest() error = %v", err)
+	}
+	if got.Title != "Report" || got.Message != "See files" {
+		t.Fatalf("got title=%q message=%q", got.Title, got.Message)
+	}
+	if strings.Join(got.Tags, ",") != "mail,report" {
+		t.Fatalf("got tags=%v", got.Tags)
+	}
+	if len(got.Attachments) != 1 {
+		t.Fatalf("got attachments=%d", len(got.Attachments))
+	}
+	attachment := got.Attachments[0]
+	if attachment.Filename != "report.txt" || string(attachment.Data) != "hello attachment" {
+		t.Fatalf("unexpected attachment: %#v", attachment)
+	}
+	if !strings.Contains(raw, `"filename":"report.txt"`) || strings.Contains(raw, "hello attachment") {
+		t.Fatalf("unexpected raw summary: %s", raw)
 	}
 }
 

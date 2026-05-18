@@ -10,7 +10,7 @@ docker run --rm -v "$PWD":/src -w /src golang:1.23-alpine sh -lc "go test ./..."
 
 测试覆盖：
 
-- GET、JSON、表单、纯文本请求解析。
+- GET、JSON、表单、纯文本和 multipart 附件请求解析。
 - 配置 API 保存发送目标、保存通知入口、列表查询入口和目标关联。
 - Web 首页包含使用说明入口，以及通知入口 curl/Python 示例渲染逻辑。
 - Web 概览日志详情会切换到发送日志页签，设置页包含发送重试配置。
@@ -18,7 +18,7 @@ docker run --rm -v "$PWD":/src -w /src golang:1.23-alpine sh -lc "go test ./..."
 - SQLite 入口列表查询不会因为单连接嵌套查询卡死。
 - SQLite 设置包含重试默认值，老数据库迁移会补齐缺失的重试设置。
 - Bark、ntfy 和公告板发送器对本地 HTTP test server 的真实请求。
-- SMTP 发送器对本地 fake SMTP server 的真实协议交互。
+- SMTP 发送器对本地 fake SMTP server 的真实协议交互，包含纯文本邮件和 multipart 附件邮件。
 - HTTP 服务配置 API、发送 API 和发送日志落库。
 - 发送失败有限重试、重试耗尽、运行中修改重试配置立即生效、无限后台重试停止。
 - SQLite 发送日志裁剪。
@@ -86,6 +86,15 @@ curl http://localhost:18080/healthz
 
 ```bash
 curl "http://localhost:8080/send/test?title=测试&message=这是一条测试通知"
+```
+
+SMTP 附件发送可用 multipart 表单验证。附件只对 SMTP 目标生效，其他目标会忽略附件：
+
+```bash
+curl -X POST "http://localhost:8080/send/test" \
+  -F "title=测试附件" \
+  -F "message=请查看附件" \
+  -F "attachments=@./docs/usage.md"
 ```
 
 发送日志页面应显示每个目标的状态、耗时、错误信息和响应内容。
